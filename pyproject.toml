@@ -1,0 +1,21 @@
+[project]
+name = "bike-rental-prediction"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "holidays>=0.81",
+    "pandas>=2.3.2",
+    "polars>=1.33.1",
+    "pyarrow>=21.0.0",
+    "pydantic-settings>=2.10.1",
+    "rich>=14.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+    "nb-black-formatter>=1.0.1",
+    "ruff>=0.13.1",
+]
