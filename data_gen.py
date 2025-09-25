@@ -22,8 +22,8 @@ import polars as pl
 # Create a single random number generator for consistent seeding
 rng = np.random.default_rng(42)
 
-# US holidays for the bike rental period (2011-2012 typically)
-us_holidays = holidays.country_holidays("US", years=range(2010, 2020))
+# US holidays for any year (will be dynamically expanded based on date range)
+us_holidays = holidays.country_holidays("US")
 
 
 def get_season(month: int) -> int:
@@ -86,11 +86,11 @@ def calculate_bike_counts(
 ) -> tuple[int, int, int]:
     """Calculate casual, registered, and total bike counts"""
     # Base demand factors
-    hour_factor = {
+    hour_factor: float = {
         0: 0.18,
         1: 0.15,
-        2: 0.15,
-        3: 0.12,
+        2: 0.08,
+        3: 0.05,
         4: 0.12,
         5: 0.15,
         6: 0.2,
@@ -133,24 +133,40 @@ def calculate_bike_counts(
     weather_impact = max(0.1, 1.2 - (weather - 1) * 0.3)
 
     # Temperature impact (people prefer moderate temperatures)
-    temp_impact = 1.0 - abs(temp - 0.6) * 0.8
+    temp_impact: float = 1.0 - abs(temp - 0.6) * 0.8
     temp_impact = max(0.2, temp_impact)
 
     # Season impact
-    season_multiplier = {1: 1.1, 2: 1.3, 3: 1.2, 4: 0.8}[season]
+    season_multiplier: float = {1: 1.1, 2: 1.3, 3: 1.2, 4: 0.8}[season]
 
     # Holiday impact
-    holiday_impact = 0.7 if holiday == 1 else 1.0
+    holiday_impact: float = 0.7 if holiday == 1 else 1.0
 
     # Calculate base counts
-    base_registered = (
-        50 * hour_factor * registered_multiplier * weather_impact * temp_impact * season_multiplier * holiday_impact
+    base_registered: float = (
+        50
+        * hour_factor
+        * registered_multiplier
+        * weather_impact
+        * temp_impact
+        * season_multiplier
+        * holiday_impact
     )
-    base_casual = 20 * hour_factor * casual_multiplier * weather_impact * temp_impact * season_multiplier * holiday_impact
+    base_casual: float = (
+        20
+        * hour_factor
+        * casual_multiplier
+        * weather_impact
+        * temp_impact
+        * season_multiplier
+        * holiday_impact
+    )
 
     # Add some randomness
-    registered = max(0, int(base_registered + rng.normal(0, base_registered * 0.3)))
-    casual = max(0, int(base_casual + rng.normal(0, base_casual * 0.4)))
+    registered: int = max(
+        0, int(base_registered + rng.normal(0, base_registered * 0.3))
+    )
+    casual: int = max(0, int(base_casual + rng.normal(0, base_casual * 0.4)))
 
     return casual, registered, casual + registered
 
@@ -162,11 +178,11 @@ def is_holiday(date: datetime) -> bool:
 
 def generate_bike_data(start_date: str, end_date: str) -> pl.DataFrame:
     """Generate bike rental data between start and end dates"""
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
+    start: datetime = datetime.strptime(start_date, "%Y-%m-%d")
+    end: datetime = datetime.strptime(end_date, "%Y-%m-%d")
 
     data_rows: list[dict[str, Any]] = []
-    current = start
+    current: datetime = start
 
     print(f"Generating data from {start_date} to {end_date}...")
 
@@ -177,7 +193,7 @@ def generate_bike_data(start_date: str, end_date: str) -> pl.DataFrame:
 
             # Basic date/time features
             season = get_season(dt.month)
-            yr = dt.year - 2011  # 0-based year
+            yr = dt.year - 2011  # 0-based year (2011=0, 2012=1, 2024=13, etc.)
             mnth = dt.month
             hr = hour
             weekday = dt.weekday()  # 0=Monday, 6=Sunday
@@ -190,7 +206,9 @@ def generate_bike_data(start_date: str, end_date: str) -> pl.DataFrame:
             hum, windspeed = calculate_humidity_windspeed(weathersit)
 
             # Bike rental counts
-            casual, registered, cnt = calculate_bike_counts(hr, workingday, holiday, weathersit, temp, season)
+            casual, registered, cnt = calculate_bike_counts(
+                hr, workingday, holiday, weathersit, temp, season
+            )
 
             data_rows.append(
                 {
@@ -243,13 +261,14 @@ def generate_bike_data(start_date: str, end_date: str) -> pl.DataFrame:
     )
 
 
-
 def main() -> int:
     """Main function to parse arguments and generate bike rental data."""
     parser = argparse.ArgumentParser(description="Generate realistic bike rental data")
     parser.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--output", default="bike_data.parquet", help="Output file path")
+    parser.add_argument(
+        "--output", default="bike_data.parquet", help="Output file path"
+    )
 
     args = parser.parse_args()
 

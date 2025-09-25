@@ -13,6 +13,7 @@ This project optimizes a city-wide bike-sharing platform's dynamic pricing. It u
   - [Problem Statement](#problem-statement)
   - [Business Objectives](#business-objectives)
   - [Key Deliverables](#key-deliverables)
+  - [Data Generator](#data-generator)
 
 <!-- /TOC -->
 ## Installation
@@ -60,3 +61,10 @@ Develop a real-time machine learning model that forecasts hourly bike rental dem
 - Evaluate and optimize pricing impact using A/B testing to assess the effectiveness of dynamic pricing strategies.
 - Build pipelines for data ingestion, model training, and deployment to ensure seamless integration and continuous improvement of the forecasting system.
 
+## Data Generator
+
+This project includes a data generator script (`data_gen.py`) that creates realistic bike rental data for any year, extending beyond the original 2011-2012 dataset. The generator supports comprehensive US federal holiday recognition and maintains compatibility with the original dataset schema.
+
+For detailed year compatibility information, see [YEAR_COMPATIBILITY.md](docs/YEAR_COMPATIBILITY.md).
+
+For usage examples, see [README_data_gen.md](docs/README_data_gen.md).
