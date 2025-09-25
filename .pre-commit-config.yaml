@@ -5,7 +5,7 @@ repos:
     hooks:
       - id: check-added-large-files
         args:
-          - --maxkb=5000 # Allow files up to 5MB (for parquet data files)
+          - --maxkb=10000 # Allow files up to 10MB
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml

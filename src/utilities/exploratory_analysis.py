@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import polars as pl
 import pyarrow as pa
+from IPython.display import display
 from narwhals.typing import IntoDataFrameT, IntoFrameT
 from plotly.subplots import make_subplots
 from scipy.stats import entropy, spearmanr
@@ -210,15 +211,16 @@ class ExploratoryDataAnalysis:
             # Central tendency: mean, median and mode
             mean: float = series.mean().__round__(2)
             median: float = series.median().__round__(2)
-            mode: list[float] = series.mode().to_list()
+            mode: list[float] = series.mode().to_list()[:5]  # Top 5 modes
 
             # Spread: std, variance, range, iqr_value, min, max
             std: float = series.std().__round__(2)
             variance: float = series.var().__round__(2)
-            data_range: float = series.max() - series.min()
-            iqr_value: float = series.quantile(
-                0.75, interpolation="nearest"
-            ) - series.quantile(0.25, interpolation="nearest")
+            data_range: float = (series.max() - series.min()).__round__(2)
+            iqr_value: float = (
+                series.quantile(0.75, interpolation="nearest")
+                - series.quantile(0.25, interpolation="nearest")
+            ).__round__(2)
             min_value: float = series.min()
             max_value: float = series.max()
 
@@ -235,7 +237,6 @@ class ExploratoryDataAnalysis:
             # Outliers
             _, outlier_series_iqr = self._calculate_outliers_iqr(series)
             outlier_count_iqr = outlier_series_iqr.count()
-
             _, outlier_series_zscore = self._calculate_outliers_zscore(series)
             outlier_count_zscore = outlier_series_zscore.count()
 
@@ -269,9 +270,7 @@ class ExploratoryDataAnalysis:
 
         return self._convert_to_native(summary_df)
 
-    def categorical_summary(
-        self, columns: list[str] | None = None
-    ) -> dict[str, IntoFrameT]:
+    def categorical_summary(self, columns: list[str] | None = None) -> IntoFrameT:
         """Get summary statistics for categorical columns."""
         columns = (
             self._select_valid_columns(self.categorical_columns, columns)
@@ -288,7 +287,7 @@ class ExploratoryDataAnalysis:
                 continue
 
             # Frequency counts and percentages
-            value_counts = series.value_counts().to_numpy()
+            value_counts = series.value_counts(sort=True).to_numpy()
 
             # Basic stats: count, missing_values, missing_pct, unique_values
             count: int = series.count()
@@ -986,3 +985,16 @@ class ExploratoryDataAnalysis:
 
         print("=" * 60)
         print()
+
+        # Get numeric statistics
+        print("\n 📈 Numeric Statistics:")
+        print("--" * 12)
+        numeric_stats = self.numeric_summary()
+        display(numeric_stats)
+
+        # Get categorical statistics
+        print("\n 📈 Categorical Statistics:")
+        print("--" * 14)
+        cat_stats = self.categorical_summary()
+
+        display(cat_stats)
