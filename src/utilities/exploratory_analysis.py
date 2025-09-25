@@ -4,6 +4,7 @@ import narwhals as nw
 import narwhals.selectors as n_cs
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import polars as pl
 import pyarrow as pa
@@ -13,6 +14,10 @@ from scipy.stats import entropy, spearmanr
 
 
 class ExploratoryDataAnalysis:
+    EMPTY_DATAFRAME: str = "🚫 Empty dataframe"
+    NO_NUMERIC_COLUMNS: str = "🚫 No numeric columns available"
+    NO_CATEGORICAL_COLUMNS: str = "🚫 No categorical columns available"
+
     def __init__(self, data: IntoDataFrameT, target_column: str | None = None) -> None:
         # Store the original data reference to check its type later
         self._original_data = data
@@ -22,13 +27,13 @@ class ExploratoryDataAnalysis:
         self.categorical_columns = self._get_categorical_columns()
         self.boolean_columns = self._get_boolean_columns()
 
-    def _convert_to_native(self, df: pl.DataFrame) -> IntoDataFrameT:
-        """Convert Polars DataFrame to the original dataframe type.
+    def _convert_to_native(self, df: pl.DataFrame | nw.DataFrame) -> IntoDataFrameT:
+        """Convert Polars DataFrame or Narwhals DataFrame to the original dataframe type.
 
         Parameters
         ----------
-        df : pl.DataFrame
-            The Polars DataFrame to convert.
+        df : pl.DataFrame | nw.DataFrame
+            The DataFrame to convert (either Polars or Narwhals).
 
         Returns
         -------
@@ -60,14 +65,11 @@ class ExploratoryDataAnalysis:
     def _select_valid_columns(
         actual_cols: list[str], selected_cols: list[str]
     ) -> list[str]:
+        """Select valid columns from the actual columns based on user selection."""
         return list(set(actual_cols) & set(selected_cols))
 
     def _calculate_outliers_iqr(self, series: nw.Series) -> tuple[nw.Series, nw.Series]:
         """Calculate outliers using the Interquartile Range (IQR) method.
-
-        The IQR method identifies outliers as data points that fall below Q1 - 1.5*IQR
-        or above Q3 + 1.5*IQR, where Q1 is the 25th percentile, Q3 is the 75th percentile,
-        and IQR = Q3 - Q1.
 
         Parameters
         ----------
@@ -141,11 +143,37 @@ class ExploratoryDataAnalysis:
         method: Literal["pearson", "spearman"] = "pearson",
         **kwargs: Any,
     ) -> IntoFrameT:
-        """Calculate correlation matrix for numeric columns."""
+        """
+        Calculate the correlation matrix for the numeric columns in the dataset.
+
+        This method computes the correlation matrix using either Pearson or Spearman correlation
+        for all numeric columns present in the data. It requires at least two numeric columns
+        to perform the analysis.
+
+        Parameters
+        ----------
+        method : Literal["pearson", "spearman"], default "pearson"
+            The correlation method to use. "pearson" for linear correlation, "spearman" for
+            rank-based correlation.
+        **kwargs : Any
+            Additional keyword arguments passed to the underlying correlation function
+            (np.corrcoef for Pearson or scipy.stats.spearmanr for Spearman).
+
+        Returns
+        -------
+        IntoFrameT
+            A DataFrame containing the correlation matrix, with columns and index labeled
+            by the numeric column names.
+
+        Raises
+        ------
+        ValueError
+            If there are fewer than two numeric columns in the dataset.
+        """
 
         if len(self.numeric_columns) < 2:
             raise ValueError(
-                "At least two numeric columns are required for correlation analysis."
+                "🚫 At least two numeric columns are required for correlation analysis."
             )
 
         X: np.ndarray[Any, Any] = self.data.select(self.numeric_columns).to_numpy()
@@ -176,6 +204,7 @@ class ExploratoryDataAnalysis:
             series = self.data[col]
 
             if len(series) == 0:
+                print(self.EMPTY_DATAFRAME)
                 continue
 
             # Central tendency: mean, median and mode
@@ -297,6 +326,30 @@ class ExploratoryDataAnalysis:
         self, groupby: str, numeric_cols: list[str] | None = None
     ) -> IntoFrameT:
         # Ensure the column is a valid cat column
+        """
+        Perform group analysis on a categorical column by aggregating numeric columns.
+
+        Parameters
+        ----------
+        groupby : str
+            The name of the categorical column to group by. Must be a valid categorical
+            variable in the dataset.
+        numeric_cols : list[str] or None, optional
+            List of numeric column names to include in the analysis. If None (default),
+            all numeric columns are used.
+
+        Returns
+        -------
+        IntoFrameT
+            A DataFrame containing the grouped aggregations with columns suffixed by
+            the statistic name (e.g., '_count', '_mean').
+
+        Raises
+        ------
+        ValueError
+            If `groupby` is not a categorical column or if no valid numeric columns
+            are found.
+        """
         if groupby not in self.categorical_columns:
             raise ValueError(f"🚫 {groupby!r} must be a categorical variable")
         numeric_cols = (
@@ -326,13 +379,31 @@ class ExploratoryDataAnalysis:
         columns: list[str] | None = None,
         plot_type: Literal["all", "histogram", "box", "violin"] = "all",
     ) -> go.Figure:
+        """
+        Plot the distribution of numeric columns using specified plot types.
+
+        Parameters
+        ----------
+        columns : list of str or None, optional
+            List of column names to plot. If None, all numeric columns are used.
+            Default is None.
+        plot_type : {'all', 'histogram', 'box', 'violin'}, optional
+            Type of plot to generate. If 'all', creates histograms, box plots, and
+            violin plots for each column in a 3-row subplot layout. Otherwise,
+            creates the specified plot type in a grid layout. Default is 'all'.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            A Plotly figure object containing the distribution plots.
+        """
         columns = (
             self._select_valid_columns(self.numeric_columns, columns)
             if columns
             else self.numeric_columns
         )
         if not columns:
-            print("🚫 No numeric columns available for plotting.")
+            print(self.NO_NUMERIC_COLUMNS)
             return go.Figure()
 
         n_cols: int = min(3, len(columns))
@@ -373,7 +444,9 @@ class ExploratoryDataAnalysis:
                 )
 
             fig.update_layout(
-                height=900, title_text="Numeric Distributions - All Plot Types"
+                height=800,
+                width=1000,
+                title_text="Numeric Distributions - All Plot Types",
             )
 
         else:
@@ -406,6 +479,7 @@ class ExploratoryDataAnalysis:
 
             fig.update_layout(
                 height=300 * n_rows,
+                width=400 * n_rows,
                 title_text=f"Numeric Distributions - {plot_type.title()}",
             )
 
@@ -416,13 +490,31 @@ class ExploratoryDataAnalysis:
         columns: list[str] | None = None,
         plot_type: Literal["all", "bar", "pie"] = "all",
     ) -> go.Figure:
+        """
+        Plot the distribution of categorical columns using bar and/or pie charts.
+
+        Parameters
+        ----------
+        columns : list of str, optional
+            List of categorical column names to plot. If None, all categorical columns
+            are used. Only valid columns present in the data are selected.
+        plot_type : {"all", "bar", "pie"}, default "all"
+            Type of plot to generate. "all" creates both bar and pie charts in subplots,
+            "bar" creates only bar charts, and "pie" creates only pie charts.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            A Plotly figure object containing the categorical distribution plots.
+            If no categorical columns are available, an empty figure is returned.
+        """
         columns = (
             self._select_valid_columns(self.categorical_columns, columns)
             if columns
             else self.categorical_columns
         )
         if not columns:
-            print("🚫 No categorical columns available for plotting.")
+            print(self.NO_CATEGORICAL_COLUMNS)
             return go.Figure()
 
         if plot_type == "all":
@@ -528,6 +620,7 @@ class ExploratoryDataAnalysis:
 
             fig.update_layout(
                 height=300 * n_rows,
+                width=400 * n_rows,
                 title_text=f"Categorical Distributions - {plot_type.title()}",
             )
 
@@ -536,9 +629,25 @@ class ExploratoryDataAnalysis:
     def plot_correlation_heatmap(
         self, method: Literal["pearson", "spearman"] = "pearson"
     ) -> go.Figure:
+        """
+        Plot a correlation heatmap using Plotly.
+
+        Parameters
+        ----------
+        method : {"pearson", "spearman"}, default "pearson"
+            The correlation method to use. "pearson" for linear correlation,
+            "spearman" for rank correlation.
+
+        Returns
+        -------
+        go.Figure
+            A Plotly figure object containing the correlation heatmap. If the
+            correlation matrix is empty, an empty figure is returned.
+        """
         corr_matrix: IntoFrameT = self.correlation_analysis(method=method)
 
         if len(corr_matrix) == 0:
+            print(self.EMPTY_DATAFRAME)
             return go.Figure()
 
         fig = go.Figure(
@@ -556,6 +665,8 @@ class ExploratoryDataAnalysis:
         )
 
         fig.update_layout(
+            height=600,
+            width=800,
             title=f"{method.title()} Correlation Matrix",
             xaxis_title="Variables",
             yaxis_title="Variables",
@@ -566,6 +677,22 @@ class ExploratoryDataAnalysis:
     def plot_outliers(
         self, columns: list[str] | None = None, method: Literal["iqr", "zscore"] = "iqr"
     ) -> go.Figure:
+        """Plot outliers in specified numeric columns using IQR or Z-score method.
+
+        Parameters
+        ----------
+        columns : list of str, optional
+            List of column names to plot. If None, uses all numeric columns.
+            Only valid numeric columns are selected.
+        method : {"iqr", "zscore"}, default "iqr"
+            Method to detect outliers. "iqr" uses Interquartile Range, "zscore" uses Z-score.
+
+        Returns
+        -------
+        go.Figure
+            A Plotly figure object containing subplots for each column's outlier plot.
+            If no valid columns are found, returns an empty figure.
+        """
         columns = (
             self._select_valid_columns(self.numeric_columns, columns)
             if columns
@@ -573,7 +700,7 @@ class ExploratoryDataAnalysis:
         )
 
         if not columns:
-            print("No numeric columns to plot")
+            print(self.NO_CATEGORICAL_COLUMNS)
             return go.Figure()
 
         n_cols = min(3, len(columns))
@@ -638,6 +765,224 @@ class ExploratoryDataAnalysis:
                 )
 
         fig.update_layout(
-            height=300 * n_rows, width=400 * n_rows, title_text="Outliers Detection"
+            height=300 * n_rows,
+            width=450 * n_rows,
+            title_text="Outliers Detection",
         )
         return fig
+
+    def plot_group_analysis(
+        self,
+        groupby: str,
+        numeric_col: str,
+        plot_type: Literal["bar", "box", "scatter", "violin"] = "bar",
+    ) -> go.Figure:
+        """
+        Generate a Plotly figure for group-based analysis of a numeric column.
+
+        Parameters
+        ----------
+        groupby : str
+            The name of the categorical column to group by. Must be present in
+            the dataset's categorical columns.
+        numeric_col : str
+            The name of the numeric column to analyze. Must be present in the
+            dataset's numeric columns.
+        plot_type : {"bar", "box", "scatter", "violin"}, optional
+            The type of plot to generate. Default is "bar".
+            - "bar": Bar plot of the mean of the numeric column per group.
+            - "box": Box plot of the numeric column distribution per group.
+            - "scatter": Scatter plot with groupby on x-axis and numeric_col on y-axis.
+            - "violin": Violin plot of the numeric column distribution per group.
+
+        Returns
+        -------
+        go.Figure
+            A Plotly figure object containing the generated plot.
+
+        Raises
+        ------
+        ValueError
+            If `groupby` is not a categorical column or `numeric_col` is not a
+            numeric column, or if `plot_type` is not one of the allowed values.
+        """
+
+        data = self._convert_to_native(self.data)
+        if groupby not in self.categorical_columns:
+            raise ValueError(f"🚫 {groupby!r} is not a categorical column")
+
+        if numeric_col not in self.numeric_columns:
+            raise ValueError(f"🚫 {numeric_col!r} is not a numeric column")
+
+        if plot_type == "box":
+            fig = px.box(
+                data,
+                x=groupby,
+                y=numeric_col,
+                title=f"{numeric_col} by {groupby} - Box Plot",
+            )
+        elif plot_type == "violin":
+            fig = px.violin(
+                data,
+                x=groupby,
+                y=numeric_col,
+                title=f"{numeric_col} by {groupby} - Violin Plot",
+            )
+        elif plot_type == "bar":
+            grouped_data = self.data.group_by(groupby).agg(n_cs.numeric().mean())
+            grouped_data = self._convert_to_native(grouped_data)
+            fig = px.bar(
+                grouped_data,
+                x=groupby,
+                y=numeric_col,
+                title=f"Average {numeric_col} by {groupby}",
+            )
+        elif plot_type == "scatter":
+            # For scatter plot, we'll use the index as x-axis
+            fig = px.scatter(
+                data,
+                x=groupby,
+                y=numeric_col,
+                title=f"{numeric_col} by {groupby} - Scatter Plot",
+            )
+        else:
+            raise ValueError(
+                '🚫 plot_type must be "box", "violin", "bar", or "scatter"'
+            )
+
+        return fig
+
+    def generate_full_report(self) -> dict[str, Any]:
+        """Generate a comprehensive report summarizing the dataset.
+
+        This method compiles various statistics and analyses into a single
+        dictionary, including dataset information, summaries for numeric and
+        categorical columns, and a correlation matrix.
+
+        Returns
+        -------
+        dict[str, Any]
+            A dictionary with the following keys:
+            - 'dataset_info': dict containing shape, column counts, row count,
+              total missing values, and memory usage.
+            - 'numeric_summary': summary statistics for numeric columns.
+            - 'categorical_summary': summary statistics for categorical columns.
+            - 'correlation_matrix': correlation analysis results.
+        """
+        return {
+            "dataset_info": {
+                "shape": self.data.shape,
+                "numeric_columns": len(self.numeric_columns),
+                "categorical_columns": len(self.categorical_columns),
+                "boolean_columns": len(self.boolean_columns),
+                "total_columns": self.data.shape[1],
+                "total_rows": self.data.shape[0],
+                "missing_values_total": self.data.null_count().to_numpy().sum().item(),
+                "memory_usage": f"{round(self.data.estimated_size(unit='mb'), 2)} MB",
+            },
+            "numeric_summary": self.numeric_summary(),
+            "categorical_summary": self.categorical_summary(),
+            "correlation_matrix": self.correlation_analysis(),
+        }
+
+    def display_all_plots(
+        self,
+        outlier_method: Literal["iqr", "zscore"] = "iqr",
+        numeric_cols: list[str] | None = None,
+    ) -> None:
+        """
+        Display all exploratory data analysis plots.
+
+        This method generates and displays four key visualizations for the dataset:
+        - Numeric column distributions
+        - Categorical column distributions
+        - Correlation heatmap for numeric columns
+        - Outlier detection plots using the specified method
+
+        Parameters
+        ----------
+        outlier_method : {"iqr", "zscore"}, default "iqr"
+            The method to use for outlier detection. Options are "iqr" (Interquartile Range)
+            or "zscore" (Z-Score).
+        numeric_cols : list of str or None, default None
+            List of numeric column names to include in the analysis. If None, all numeric
+            columns from the dataset are used.
+
+        Returns
+        -------
+        None
+            This method does not return any value; it displays plots directly.
+        """
+        numeric_cols = (
+            self._select_valid_columns(self.numeric_columns, numeric_cols)
+            if numeric_cols
+            else self.numeric_columns
+        )
+
+        # Create visualizations
+        fig1 = self.plot_numeric_distribution()
+        fig1.show()
+
+        fig2 = self.plot_categorical_distribution()
+        fig2.show()
+
+        fig3 = self.plot_correlation_heatmap()
+        fig3.show()
+
+        fig4 = self.plot_outliers(method=outlier_method)
+        fig4.show()
+
+    def print_summary(self) -> None:
+        """Print a summary of the dataset's key statistics and structure.
+
+        This method provides an overview of the dataset, including its shape,
+        column types, missing values, memory usage, and lists of numeric,
+        categorical, and boolean columns. If a target column is specified,
+        it is also displayed.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            This method prints the summary to the console and does not return any value.
+
+        Notes
+        -----
+        The summary includes:
+        - Dataset shape (rows and columns).
+        - Counts of numeric, categorical, and boolean columns.
+        - Total missing values across the dataset.
+        - Estimated memory usage in MB.
+        - Target column name if available.
+        - Lists of column names by type.
+        """
+        print("=" * 60)
+        print("🚀 EXPLORATORY DATA ANALYSIS SUMMARY")
+        print("=" * 60)
+        print(f"* Dataset Shape: {self.data.shape}")
+        print(f"* Total Rows: {self.data.shape[0]}")
+        print(f"* Total Columns: {self.data.shape[1]}")
+        print(f"* Numeric Columns: {len(self.numeric_columns)}")
+        print(f"* Categorical Columns: {len(self.categorical_columns)}")
+        print(f"* Boolean Columns: {len(self.boolean_columns)}")
+        print(
+            f"* Total Missing Values: {self.data.null_count().to_numpy().sum().item()}"
+        )
+        print(f"* Memory Usage: {round(self.data.estimated_size(unit='mb'), 2)}  MB")
+
+        if self.target_column:
+            print(f"* Target Column: {self.target_column}")
+
+        print("\n* Numeric Columns:")
+        for col in self.numeric_columns:
+            print(f"  - {col}")
+
+        print("\n* Categorical Columns:")
+        for col in self.categorical_columns:
+            print(f"  - {col}")
+
+        print("=" * 60)
+        print()
