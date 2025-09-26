@@ -294,10 +294,13 @@ class ExploratoryDataAnalysis:
             series = self.data[col]
 
             if len(series) == 0:
+                print(self.EMPTY_DATAFRAME)
                 continue
 
             # Frequency counts and percentages
-            value_counts = series.value_counts(sort=True).to_numpy()
+            value_counts: list[list[Any]] = (
+                series.value_counts(sort=True).to_numpy().tolist()
+            )
 
             # Basic stats: count, missing_values, missing_pct, unique_values
             count: int = series.count()
