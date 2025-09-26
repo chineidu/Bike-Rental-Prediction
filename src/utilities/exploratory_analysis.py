@@ -42,12 +42,22 @@ class ExploratoryDataAnalysis:
             The converted DataFrame in the same format as the original input data.
 
         """
+        # Handle Narwhals DataFrame
+        if hasattr(df, "to_native"):  # Narwhals DataFrame
+            df = df.to_native()  # type: ignore
+
+        # Now convert to the original format
         if isinstance(self._original_data, pd.DataFrame):
-            return cast(IntoDataFrameT, df.to_pandas())
+            if isinstance(df, pl.DataFrame):
+                return cast(IntoDataFrameT, df.to_pandas())
+            return cast(IntoDataFrameT, df)
 
         if isinstance(self._original_data, pa.Table):
-            return cast(IntoDataFrameT, df.to_arrow())
+            if isinstance(df, pl.DataFrame):
+                return cast(IntoDataFrameT, df.to_arrow())
+            return cast(IntoDataFrameT, df)
 
+        # Default: return as Polars DataFrame
         return cast(IntoDataFrameT, df)
 
     def _get_numeric_columns(self) -> list[str]:
@@ -243,6 +253,7 @@ class ExploratoryDataAnalysis:
             summary_stats.append(
                 {
                     "column": col,
+                    "unique_values": unique_values,
                     "mean": mean,
                     "median": median,
                     "mode": mode,
@@ -261,7 +272,6 @@ class ExploratoryDataAnalysis:
                     "total_count": count,
                     "missing_values": missing_values,
                     "missing_pct": missing_pct,
-                    "unique_values": unique_values,
                 }
             )
 
@@ -377,6 +387,7 @@ class ExploratoryDataAnalysis:
         self,
         columns: list[str] | None = None,
         plot_type: Literal["all", "histogram", "box", "violin"] = "all",
+        **kwargs,
     ) -> go.Figure:
         """
         Plot the distribution of numeric columns using specified plot types.
@@ -443,8 +454,8 @@ class ExploratoryDataAnalysis:
                 )
 
             fig.update_layout(
-                height=800,
-                width=1000,
+                height=kwargs.get("height", 900),
+                width=kwargs.get("width", 400 * n_cols),
                 title_text="Numeric Distributions - All Plot Types",
             )
 
@@ -488,6 +499,7 @@ class ExploratoryDataAnalysis:
         self,
         columns: list[str] | None = None,
         plot_type: Literal["all", "bar", "pie"] = "all",
+        **kwargs,
     ) -> go.Figure:
         """
         Plot the distribution of categorical columns using bar and/or pie charts.
@@ -543,6 +555,7 @@ class ExploratoryDataAnalysis:
                         x=value_counts[col].to_numpy(),
                         y=value_counts["proportion"].to_numpy(),
                         name=f"{col}_bar",
+                        hovertemplate="%{y:.1f}%<extra></extra>",
                         showlegend=False,
                     ),
                     row=i + 1,
@@ -555,6 +568,7 @@ class ExploratoryDataAnalysis:
                         labels=value_counts[col].to_numpy(),
                         values=value_counts["proportion"].to_numpy(),
                         name=f"{col}_pie",
+                        hovertemplate="%{y:.1f}%<extra></extra>",
                         showlegend=False,
                     ),
                     row=i + 1,
@@ -562,8 +576,8 @@ class ExploratoryDataAnalysis:
                 )
 
             fig.update_layout(
-                height=400 * len(columns),
-                width=420 * len(columns),
+                height=kwargs.get("height", 300 * n_rows),
+                width=kwargs.get("width", 420 * len(columns)),
                 title_text="Categorical Distributions",
             )
 
@@ -600,6 +614,7 @@ class ExploratoryDataAnalysis:
                             x=value_counts[col].to_numpy(),
                             y=value_counts["proportion"].to_numpy(),
                             name=col,
+                            hovertemplate="%{y:.1f}%<extra></extra>",
                             showlegend=False,
                         ),
                         row=row,
@@ -611,6 +626,7 @@ class ExploratoryDataAnalysis:
                             labels=value_counts[col].to_numpy(),
                             values=value_counts["proportion"].to_numpy(),
                             name=col,
+                            hovertemplate="%{y:.1f}%<extra></extra>",
                             showlegend=False,
                         ),
                         row=row,
@@ -626,7 +642,7 @@ class ExploratoryDataAnalysis:
         return fig
 
     def plot_correlation_heatmap(
-        self, method: Literal["pearson", "spearman"] = "pearson"
+        self, method: Literal["pearson", "spearman"] = "pearson", **kwargs
     ) -> go.Figure:
         """
         Plot a correlation heatmap using Plotly.
@@ -664,8 +680,8 @@ class ExploratoryDataAnalysis:
         )
 
         fig.update_layout(
-            height=600,
-            width=800,
+            height=kwargs.get("height", 800) * 0.8,
+            width=kwargs.get("width", 800) * 0.8,
             title=f"{method.title()} Correlation Matrix",
             xaxis_title="Variables",
             yaxis_title="Variables",
@@ -674,7 +690,10 @@ class ExploratoryDataAnalysis:
         return fig
 
     def plot_outliers(
-        self, columns: list[str] | None = None, method: Literal["iqr", "zscore"] = "iqr"
+        self,
+        columns: list[str] | None = None,
+        method: Literal["iqr", "zscore"] = "iqr",
+        **kwargs,
     ) -> go.Figure:
         """Plot outliers in specified numeric columns using IQR or Z-score method.
 
@@ -764,8 +783,8 @@ class ExploratoryDataAnalysis:
                 )
 
         fig.update_layout(
-            height=300 * n_rows,
-            width=450 * n_rows,
+            height=kwargs.get("height", 300 * n_rows),
+            width=kwargs.get("width", 450 * n_rows),
             title_text="Outliers Detection",
         )
         return fig
@@ -774,6 +793,7 @@ class ExploratoryDataAnalysis:
         self,
         groupby: str,
         numeric_col: str,
+        sortby: str | None = None,
         plot_type: Literal["bar", "box", "scatter", "violin"] = "bar",
     ) -> go.Figure:
         """
@@ -787,6 +807,8 @@ class ExploratoryDataAnalysis:
         numeric_col : str
             The name of the numeric column to analyze. Must be present in the
             dataset's numeric columns.
+        sortby: str, default=None
+            The name of the numeric column to use for sorting
         plot_type : {"bar", "box", "scatter", "violin"}, optional
             The type of plot to generate. Default is "bar".
             - "bar": Bar plot of the mean of the numeric column per group.
@@ -806,12 +828,15 @@ class ExploratoryDataAnalysis:
             numeric column, or if `plot_type` is not one of the allowed values.
         """
 
-        data = self._convert_to_native(self.data)
+        data = self.data.to_polars()
         if groupby not in self.categorical_columns:
             raise ValueError(f"🚫 {groupby!r} is not a categorical column")
 
         if numeric_col not in self.numeric_columns:
             raise ValueError(f"🚫 {numeric_col!r} is not a numeric column")
+
+        if sortby is not None and sortby not in self.numeric_columns:
+            raise ValueError(f"🚫 {sortby!r} is not a numeric column")
 
         if plot_type == "box":
             fig = px.box(
@@ -829,6 +854,9 @@ class ExploratoryDataAnalysis:
             )
         elif plot_type == "bar":
             grouped_data = self.data.group_by(groupby).agg(n_cs.numeric().mean())
+            if sortby:
+                grouped_data = grouped_data.sort(sortby, descending=True)
+
             grouped_data = self._convert_to_native(grouped_data)
             fig = px.bar(
                 grouped_data,
@@ -847,6 +875,119 @@ class ExploratoryDataAnalysis:
         else:
             raise ValueError(
                 '🚫 plot_type must be "box", "violin", "bar", or "scatter"'
+            )
+
+        return fig
+
+    def plot_scatter(
+        self,
+        x_col: str,
+        y_col: str,
+        color_col: str | None = None,
+        size_col: str | None = None,
+        **kwargs: Any,
+    ) -> go.Figure:
+        """
+        Create a scatter plot for two numeric columns with optional color and size encoding.
+
+        Parameters
+        ----------
+        x_col : str
+            Name of the column to plot on the x-axis. Must be a numeric column.
+        y_col : str
+            Name of the column to plot on the y-axis. Must be a numeric column.
+        color_col : str or None, optional
+            Name of the column to use for color encoding. Can be categorical, boolean, or numeric.
+            If None, points will not be colored by a column. Default is None.
+        size_col : str or None, optional
+            Name of the numeric column to use for point size encoding. If None, points will use
+            a constant size. Default is None.
+        **kwargs : Any
+            Additional keyword arguments forwarded to Plotly Express (for example: height, width,
+            trendline, opacity, etc.).
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            A Plotly Figure object containing the generated scatter plot.
+
+        Raises
+        ------
+        ValueError
+            If `x_col` or `y_col` are not numeric columns, if `color_col` is not a valid column
+            for color encoding, or if `size_col` is not a numeric column.
+
+        Examples
+        --------
+        >>> fig = eda.plot_scatter('temp', 'count', color_col='season', size_col='windspeed', trendline='ols')
+        >>> fig.show()
+        """
+        if x_col not in self.numeric_columns:
+            raise ValueError(f"🚫 {x_col!r} is not a numeric column")
+
+        if y_col not in self.numeric_columns:
+            raise ValueError(f"🚫 {y_col!r} is not a numeric column")
+
+        if (
+            color_col is not None
+            and color_col
+            not in self.categorical_columns
+            + self.boolean_columns
+            + self.numeric_columns
+        ):
+            raise ValueError(
+                f"🚫 {color_col!r} is not a valid column for color encoding"
+            )
+
+        if size_col is not None and size_col not in self.numeric_columns:
+            raise ValueError(f"🚫 {size_col!r} is not a numeric column")
+
+        # Convert to native format for Plotly
+        data = self._convert_to_native(self.data)
+
+        # Create a copy of kwargs without title and trendline if they exist
+        plot_kwargs: dict[str, Any] = kwargs.copy()
+        plot_kwargs.pop("title", None)  # Remove title from kwargs if present
+        plot_kwargs.pop("trendline", None)  # Remove trendline from kwargs if present
+
+        # Create the scatter plot
+        fig = px.scatter(
+            data,
+            x=x_col,
+            y=y_col,
+            color=color_col,
+            size=size_col,
+            title=f"Scatter Plot: {x_col} vs {y_col}",
+            opacity=0.6,
+            labels={
+                x_col: x_col.replace("_", " ").title(),
+                y_col: y_col.replace("_", " ").title(),
+                color_col: color_col.replace("_", " ").title() if color_col else None,
+                size_col: size_col.replace("_", " ").title() if size_col else None,
+            },
+            **plot_kwargs,
+        )
+
+        # Update layout
+        fig.update_layout(
+            height=kwargs.get("height", 600),
+            width=kwargs.get("width", 800),
+            xaxis_title=x_col.replace("_", " ").title(),
+            yaxis_title=y_col.replace("_", " ").title(),
+        )
+
+        # Add trend line if requested
+        if kwargs.get("trendline", False):
+            # For trendline, we need to use plotly express with trendline parameter
+            fig = px.scatter(
+                data,
+                x=x_col,
+                y=y_col,
+                color=color_col,
+                size=size_col,
+                trendline=kwargs.get("trendline"),
+                title=f"Scatter Plot: {x_col} vs {y_col} with Trendline",
+                **plot_kwargs,
             )
 
         return fig
@@ -888,6 +1029,7 @@ class ExploratoryDataAnalysis:
         self,
         outlier_method: Literal["iqr", "zscore"] = "iqr",
         numeric_cols: list[str] | None = None,
+        **kwargs: Any,
     ) -> None:
         """
         Display all exploratory data analysis plots.
@@ -919,16 +1061,16 @@ class ExploratoryDataAnalysis:
         )
 
         # Create visualizations
-        fig1 = self.plot_numeric_distribution()
+        fig1 = self.plot_numeric_distribution(**kwargs)
         fig1.show()
 
-        fig2 = self.plot_categorical_distribution()
+        fig2 = self.plot_categorical_distribution(**kwargs)
         fig2.show()
 
-        fig3 = self.plot_correlation_heatmap()
+        fig3 = self.plot_correlation_heatmap(**kwargs)
         fig3.show()
 
-        fig4 = self.plot_outliers(method=outlier_method)
+        fig4 = self.plot_outliers(method=outlier_method, **kwargs)
         fig4.show()
 
     def print_summary(self) -> None:
