@@ -184,7 +184,9 @@ def get_categorical_summary_stats(data: nw.DataFrame) -> list[dict[str, Any]]:
 
         # Frequency counts and percentages
         value_counts: list[list[Any]] = (
-            series.value_counts(sort=True).to_numpy().tolist()
+            series.value_counts(sort=True)
+            .to_numpy()
+            .tolist()[:10]  # Top 10 unique values
         )
 
         # Basic stats: count, missing_values, missing_pct, unique_values
