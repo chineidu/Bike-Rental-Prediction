@@ -390,7 +390,7 @@ class ExploratoryDataAnalysis:
         self,
         columns: list[str] | None = None,
         plot_type: Literal["all", "histogram", "box", "violin"] = "all",
-        **kwargs,
+        **kwargs: dict[str, Any],
     ) -> go.Figure:
         """
         Plot the distribution of numeric columns using specified plot types.
@@ -502,7 +502,7 @@ class ExploratoryDataAnalysis:
         self,
         columns: list[str] | None = None,
         plot_type: Literal["all", "bar", "pie"] = "all",
-        **kwargs,
+        **kwargs: dict[str, Any],
     ) -> go.Figure:
         """
         Plot the distribution of categorical columns using bar and/or pie charts.
@@ -645,7 +645,9 @@ class ExploratoryDataAnalysis:
         return fig
 
     def plot_correlation_heatmap(
-        self, method: Literal["pearson", "spearman"] = "pearson", **kwargs
+        self,
+        method: Literal["pearson", "spearman"] = "pearson",
+        **kwargs: dict[str, Any],
     ) -> go.Figure:
         """
         Plot a correlation heatmap using Plotly.
@@ -683,8 +685,8 @@ class ExploratoryDataAnalysis:
         )
 
         fig.update_layout(
-            height=kwargs.get("height", 800) * 0.8,
-            width=kwargs.get("width", 800) * 0.8,
+            height=kwargs.get("height", 800) * 0.8,  # type: ignore
+            width=kwargs.get("width", 800) * 0.8,  # type: ignore
             title=f"{method.title()} Correlation Matrix",
             xaxis_title="Variables",
             yaxis_title="Variables",
@@ -696,7 +698,7 @@ class ExploratoryDataAnalysis:
         self,
         columns: list[str] | None = None,
         method: Literal["iqr", "zscore"] = "iqr",
-        **kwargs,
+        **kwargs: dict[str, Any],
     ) -> go.Figure:
         """Plot outliers in specified numeric columns using IQR or Z-score method.
 
