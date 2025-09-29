@@ -13,6 +13,8 @@ from narwhals.typing import IntoDataFrameT, IntoFrameT
 from plotly.subplots import make_subplots
 from scipy.stats import entropy, spearmanr
 
+from src.utilities.utils import _select_valid_columns, get_vibrant_color
+
 
 class ExploratoryDataAnalysis:
     EMPTY_DATAFRAME: str = "🚫 Empty dataframe"
@@ -71,13 +73,6 @@ class ExploratoryDataAnalysis:
     def _get_boolean_columns(self) -> list[str]:
         """Get boolean columns from the DataFrame."""
         return self.data.select(n_cs.boolean()).columns
-
-    @staticmethod
-    def _select_valid_columns(
-        actual_cols: list[str], selected_cols: list[str]
-    ) -> list[str]:
-        """Select valid columns from the actual columns based on user selection."""
-        return list(set(actual_cols) & set(selected_cols))
 
     def _calculate_outliers_iqr(self, series: nw.Series) -> tuple[nw.Series, nw.Series]:
         """Calculate outliers using the Interquartile Range (IQR) method.
@@ -204,7 +199,7 @@ class ExploratoryDataAnalysis:
     def numeric_summary(self, columns: list[str] | None = None) -> IntoFrameT:
         """Get summary statistics for numeric columns."""
         columns = (
-            self._select_valid_columns(self.numeric_columns, columns)
+            _select_valid_columns(self.numeric_columns, columns)
             if columns
             else self.numeric_columns
         )
@@ -283,7 +278,7 @@ class ExploratoryDataAnalysis:
     def categorical_summary(self, columns: list[str] | None = None) -> IntoFrameT:
         """Get summary statistics for categorical columns."""
         columns = (
-            self._select_valid_columns(self.categorical_columns, columns)
+            _select_valid_columns(self.categorical_columns, columns)
             if columns
             else self.categorical_columns + self.boolean_columns
         )
@@ -329,8 +324,7 @@ class ExploratoryDataAnalysis:
                     "missing_pct": missing_pct,
                 }
             )
-
-        summary_df: pl.DataFrame = pl.from_records(summary_stats)
+        summary_df: pl.DataFrame = pl.from_records(summary_stats, strict=False)
 
         return self._convert_to_native(summary_df)
 
@@ -365,7 +359,7 @@ class ExploratoryDataAnalysis:
         if groupby not in self.categorical_columns:
             raise ValueError(f"🚫 {groupby!r} must be a categorical variable")
         numeric_cols = (
-            self._select_valid_columns(self.numeric_columns, numeric_cols)
+            _select_valid_columns(self.numeric_columns, numeric_cols)
             if numeric_cols
             else self.numeric_columns
         )
@@ -411,7 +405,7 @@ class ExploratoryDataAnalysis:
             A Plotly figure object containing the distribution plots.
         """
         columns = (
-            self._select_valid_columns(self.numeric_columns, columns)
+            _select_valid_columns(self.numeric_columns, columns)
             if columns
             else self.numeric_columns
         )
@@ -523,7 +517,7 @@ class ExploratoryDataAnalysis:
             If no categorical columns are available, an empty figure is returned.
         """
         columns = (
-            self._select_valid_columns(self.categorical_columns, columns)
+            _select_valid_columns(self.categorical_columns, columns)
             if columns
             else self.categorical_columns
         )
@@ -666,18 +660,28 @@ class ExploratoryDataAnalysis:
         """
         corr_matrix: IntoFrameT = self.correlation_analysis(method=method)
 
-        if len(corr_matrix) == 0:
+        if isinstance(self._original_data, pd.DataFrame):
+            corr_df = pl.from_pandas(corr_matrix)  # type: ignore
+
+        if isinstance(self._original_data, pa.Table):
+            print("🚫 Correlation heatmap is not fully supported for PyArrow Table.")
+            corr_df: pl.DataFrame = pl.from_arrow(corr_matrix)  # type: ignore
+
+        else:
+            corr_df = corr_matrix
+
+        if len(corr_df) == 0:  # type: ignore
             print(self.EMPTY_DATAFRAME)
             return go.Figure()
 
         fig = go.Figure(
             data=go.Heatmap(
-                z=corr_matrix.to_numpy(),
-                x=corr_matrix.columns,
-                y=corr_matrix.columns,
+                z=corr_df.to_numpy(),
+                x=corr_df.columns,
+                y=corr_df.columns,
                 colorscale="RdBu",
                 zmid=0,
-                text=np.round(corr_matrix.to_numpy(), 3),
+                text=np.round(corr_df.to_numpy(), 3),
                 texttemplate="%{text}",
                 textfont={"size": 10},
                 hovertemplate="%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>",
@@ -691,6 +695,143 @@ class ExploratoryDataAnalysis:
             xaxis_title="Variables",
             yaxis_title="Variables",
         )
+
+        return fig
+
+    def plot_correlation_with_target(self, save_path: str | None = None) -> go.Figure:
+        """
+        Plots an interactive correlation bar chart for all variables vs. target using Plotly.
+
+        Parameters
+        ----------
+        save_path : str | None, optional
+            Path to save the plot as HTML/PNG, by default None.
+
+        Returns
+        -------
+        go.Figure
+            The generated Plotly figure.
+        """
+        df = self._original_data
+        target_column = self.target_column
+        if target_column is None:
+            raise ValueError(
+                "🚫 target_column must be specified for correlation with target plot."
+            )
+
+        if isinstance(df, pd.DataFrame):
+            df_polars: pl.DataFrame = pl.from_pandas(df)
+        elif isinstance(df, pa.Table):
+            df_polars = pl.from_arrow(df)
+        else:
+            df_polars = df  # type: ignore
+
+        # Select only numeric columns
+        df_polars = df_polars.select(self.numeric_columns)  # type: ignore
+
+        # Compute correlations with target
+        correlations: pl.DataFrame = (
+            df_polars.corr()  # type: ignore
+            .with_columns(pl.Series("features", df_polars.columns))  # type: ignore
+            .select(["features", target_column])
+            .sort(target_column, descending=True)
+            .filter(pl.col(target_column) != 1.0)
+        )
+
+        # Generate colors for each correlation
+        colors = [
+            get_vibrant_color(corr) for corr in correlations[target_column].to_list()
+        ]
+
+        # Create figure
+        fig = go.Figure()
+
+        # Add bars with vibrant colors
+        for i, (var, corr) in enumerate(
+            zip(correlations["features"], correlations[target_column])
+        ):
+            # Add subtle shadow effect with opacity
+            fig.add_trace(
+                go.Bar(
+                    x=[corr],
+                    y=[var],
+                    orientation="h",
+                    marker={
+                        "color": colors[i],
+                        "line": {"color": "white", "width": 1},
+                        "opacity": 0.9,
+                    },
+                    hovertemplate=f"<b>{var}</b><br>Correlation: {corr:.3f}<extra></extra>",
+                    width=0.8,
+                    showlegend=False,
+                )
+            )
+
+        # Update layout with enhanced styling
+        fig.update_layout(
+            title={
+                "text": f"<b>Feature Correlation with {target_column.title()}</b>",
+                "font": {"size": 26, "color": "#2E2E2E"},
+                "x": 0.5,
+                "xanchor": "center",
+            },
+            xaxis_title="<b>Correlation Coefficient</b>",
+            yaxis_title="<b>Features</b>",
+            template="plotly_white",
+            height=700,
+            width=1000,
+            margin={"l": 180, "r": 80, "t": 100, "b": 80},
+            hoverlabel={
+                "font_size": 16,
+                "font_color": "white",
+                "bgcolor": "rgba(0,0,0,0.8)",
+            },
+            xaxis={
+                "tickfont": {"size": 14, "color": "#2E2E2E"},
+                "title_font": {"size": 18, "color": "#2E2E2E"},
+                "gridcolor": "#E8E8E8",
+                "gridwidth": 1,
+                "range": [-1, 1],
+                "zeroline": True,
+                "zerolinecolor": "#666666",
+                "zerolinewidth": 2,
+            },
+            yaxis={
+                "tickfont": {"size": 14, "color": "#2E2E2E"},
+                "title_font": {"size": 18, "color": "#2E2E2E"},
+                "autorange": "reversed",
+                "gridcolor": "#F5F5F5",
+            },
+            plot_bgcolor="rgba(248,249,250,0.8)",
+            paper_bgcolor="white",
+        )
+
+        # Add enhanced zero-line with annotation
+        fig.add_vline(
+            x=0,
+            line_color="#666666",
+            line_dash="dash",
+            line_width=2,
+            opacity=0.8,
+            annotation_text="Zero Correlation",
+            annotation_position="top left",
+            annotation_font={"size": 8, "color": "#666666"},
+        )
+
+        # Add correlation strength indicators
+        fig.add_vline(
+            x=0.5, line_color="#00AA00", line_dash="dot", line_width=1, opacity=0.5
+        )
+        fig.add_vline(
+            x=-0.5, line_color="#AA0000", line_dash="dot", line_width=1, opacity=0.5
+        )
+
+        # Save if path provided
+        if save_path:
+            if save_path.endswith(".html"):
+                fig.write_html(save_path)
+            else:
+                fig.write_image(save_path, scale=2)
 
         return fig
 
@@ -717,7 +858,7 @@ class ExploratoryDataAnalysis:
             If no valid columns are found, returns an empty figure.
         """
         columns = (
-            self._select_valid_columns(self.numeric_columns, columns)
+            _select_valid_columns(self.numeric_columns, columns)
             if columns
             else self.numeric_columns
         )
@@ -1060,7 +1201,7 @@ class ExploratoryDataAnalysis:
             This method does not return any value; it displays plots directly.
         """
         numeric_cols = (
-            self._select_valid_columns(self.numeric_columns, numeric_cols)
+            _select_valid_columns(self.numeric_columns, numeric_cols)
             if numeric_cols
             else self.numeric_columns
         )
@@ -1093,17 +1234,6 @@ class ExploratoryDataAnalysis:
         Returns
         -------
         None
-            This method prints the summary to the console and does not return any value.
-
-        Notes
-        -----
-        The summary includes:
-        - Dataset shape (rows and columns).
-        - Counts of numeric, categorical, and boolean columns.
-        - Total missing values across the dataset.
-        - Estimated memory usage in MB.
-        - Target column name if available.
-        - Lists of column names by type.
         """
         print("=" * 60)
         print("🚀 EXPLORATORY DATA ANALYSIS SUMMARY")
