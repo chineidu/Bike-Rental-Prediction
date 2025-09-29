@@ -25,7 +25,7 @@ class InteractionFeats:
 @dataclass
 class Windows:
     feature: str
-    window: list[int]
+    windows: list[int]
 
 
 @dataclass
@@ -35,6 +35,7 @@ class FeatureConfig:
     interactions: list[InteractionFeats]
     rolling_windows: list[Windows]
     drop_feats: list[str]
+    target_col: str
 
 
 class FeatureEngineer:
@@ -88,7 +89,7 @@ class FeatureEngineer:
         # Rolling
         for window in self.config.rolling_windows:
             data = create_rolling_features(
-                data, target_col=window.feature, windows=window.window
+                data, target_col=window.feature, windows=window.windows
             )
         # Interactions
         for interaction in self.config.interactions:
@@ -105,6 +106,10 @@ class FeatureEngineer:
             )
         # Binary features
         data = create_binary_features(data)
+        # Target variable
+        data = create_target_variable(data, target_col=self.config.target_col)
+        # Fill missing values
+        data = fill_nulls(data, strategy="backward")
         # Drop features
         return drop_features(data, self.config.drop_feats)
 
@@ -165,8 +170,9 @@ def create_difference_features(
     data: nw.DataFrame, target_col: str, lags: list[int]
 ) -> nw.DataFrame:
     """Create difference features."""
+    data_pl: pl.DataFrame = data.to_polars()
     for lag in lags:
-        data_pl = data.to_polars().with_columns(
+        data_pl = data_pl.with_columns(
             pl.col(target_col).diff(lag).alias(f"{target_col}_diff_{lag}hr")
         )
     return nw.from_native(data_pl)  # type: ignore
@@ -208,17 +214,18 @@ def create_interaction_features(
 def create_rolling_features(
     data: nw.DataFrame, target_col: str, windows: list[int]
 ) -> nw.DataFrame:
-    """Create rolling mean and std features."""
+    """Create rolling mean and median features."""
+    data_pl: pl.DataFrame = data.to_polars()
     for window in windows:
-        data = data.with_columns(
-            nw.col(target_col)
+        data_pl = data_pl.with_columns(
+            pl.col(target_col)
             .rolling_mean(window)
-            .alias(f"{target_col}_roll_mean_{window}hr"),
-            nw.col(target_col)
-            .rolling_std(window)
-            .alias(f"{target_col}_roll_std_{window}hr"),
+            .alias(f"{target_col}_rolling_mean_{window}hr"),
+            pl.col(target_col)
+            .rolling_median(window)
+            .alias(f"{target_col}_rolling_median_{window}hr"),
         )
-    return data
+    return nw.from_native(data_pl)  # type: ignore
 
 
 def create_binary_features(data: nw.DataFrame) -> nw.DataFrame:
@@ -240,4 +247,22 @@ def create_binary_features(data: nw.DataFrame) -> nw.DataFrame:
             .cast(nw.Int8)
             .alias("is_business_hour"),
         ]
+    )
+
+
+def fill_nulls(
+    data: nw.DataFrame,
+    strategy: Literal[None, "forward", "backward", "min", "max", "mean", "zero", "one"],
+) -> nw.DataFrame:
+    """Fill missing values using the specified strategy."""
+    df_pl = data.to_polars().fill_null(strategy=strategy)
+    return nw.from_native(df_pl)  # type: ignore
+
+
+def create_target_variable(data: nw.DataFrame, target_col: str) -> nw.DataFrame:
+    """Create target variable by shifting the target column."""
+    var_name: str = "target"
+    """Shift the target column by -1 to predict the next time step."""
+    return data.with_columns(nw.col(target_col).shift(-1).alias(var_name)).with_columns(
+        nw.col(var_name).fill_null(strategy="forward")
     )
