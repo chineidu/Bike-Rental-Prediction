@@ -1,9 +1,10 @@
 import json
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Generator
 
 import joblib
 import mlflow
@@ -14,11 +15,13 @@ from narwhals.typing import IntoDataFrameT
 
 from src import create_logger
 
-logger = create_logger(__name__)
+logger = create_logger("mlflow_tracker")
 type WriteFn = Callable[[Any, Path], None]
 
 
 class ArtifactsType(str, Enum):
+    """Enum for different types of artifacts."""
+
     JSON = "json"
     TXT = "txt"
     YAML = "yaml"
@@ -54,9 +57,20 @@ def write_pickle(object: dict[str, Any] | Any, filepath: Path) -> None:
 
 class MLFlowTracker:
     def __init__(self, tracking_uri: str, experiment_name: str) -> None:
+        """
+        Initialize the MLFlowTracker with a tracking URI and experiment name.
+        This sets up the MLflow tracking server and experiment.
+        """
         self.experiment_name = experiment_name
+        self.tracking_uri = tracking_uri
         mlflow.set_tracking_uri(tracking_uri)
         self._set_experiment()
+        logger.info(
+            f"Initialized {self.__class__.__name__} with experiment: {experiment_name}"
+        )
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(tracking_uri={self.tracking_uri}, experiment_name={self.experiment_name})"
 
     def _set_experiment(self) -> None:
         """Set the MLflow experiment. If it doesn't exist, create it."""
@@ -67,33 +81,53 @@ class MLFlowTracker:
             logger.warning(f"Failed to set experiment {self.experiment_name}: {e}")
 
     def _get_run_name(self, run_name: str | None = None) -> str:
+        """Generate a default run name if none is provided."""
         if run_name is None:
-            run_name = f"run_{datetime.now().isoformat(sep='_T', timespec='seconds')}"
+            run_name = f"run_{datetime.now().isoformat(timespec='seconds')}"
         return run_name
 
+    @contextmanager
     def start_run(
-        self, run_name: str | None = None, tags: dict[str, str] | None = None
-    ) -> str:
+        self,
+        run_name: str | None = None,
+        nested: bool = False,
+        tags: dict[str, str] | None = None,
+    ) -> Generator[str, None, None]:
         """
-        Start a new MLflow run.
+        Context manager to start and automatically end an MLflow run.
 
         Parameters
         ----------
         run_name : str, optional
             Name of the run to start. If not provided, a default name will be generated.
+        nested : bool, optional
+            Whether the run is nested within another run. Defaults to False.
         tags : dict[str, str], optional
             Tags to be added to the run.
 
-        Returns
-        -------
+        Yields
+        ------
         str
             ID of the started run.
         """
         run_name = self._get_run_name(run_name)
+        run = mlflow.start_run(run_name=run_name, tags=tags, nested=nested)  # type: ignore
+        run_id = run.info.run_id
+        logger.info(f"Started MLflow run: {run_id}")
 
-        run = mlflow.start_run(run_name=run_name, tags=tags)  # type: ignore
-        logger.info(f"Started MLflow run: {run.info.run_id}")
-        return run.info.run_id
+        try:
+            yield run_id
+            # Auto-end run with success when context exits normally
+            self.end_run(status="FINISHED")
+
+        except Exception as e:
+            logger.error(f"Exception during MLflow run {run_id}: {e}")
+            # End run as failed and re-raise
+            try:
+                self.end_run(status="FAILED")
+            except Exception as end_exc:
+                logger.warning(f"Failed to end run {run_id} after exception: {end_exc}")
+            raise
 
     def log_params(self, params: dict[str, Any]) -> None:
         """
@@ -119,6 +153,17 @@ class MLFlowTracker:
         """
         mlflow.log_metrics(metrics, step=step)  # type: ignore
 
+    def set_tags(self, tags: dict[str, Any]) -> None:
+        """
+        Set tags for the current MLflow run.
+
+        Parameters
+        ----------
+        tags : dict[str, str]
+            Dictionary of tags to set.
+        """
+        mlflow.set_tags(tags)  # type: ignore
+
     def log_model(
         self,
         model: Any,
@@ -143,11 +188,9 @@ class MLFlowTracker:
         registered_model_name : str, optional
             Name of the registered model to log.
 
-        Notes
-        -----
-        Falls back to saving models as artifacts if MLflow model logging fails.
         """
         datetime_now: str = datetime.now().isoformat(timespec="seconds")
+        N: int = 5
         try:
             # Save model to a temporary file first
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -164,9 +207,9 @@ class MLFlowTracker:
 
                 # Format input data example if provided
                 if input_example is not None:
-                    input_example_df: pl.DataFrame = (
-                        nw.from_native(input_example).head(5).to_polars()
-                    )  # type: ignore
+                    input_example_df: pl.DataFrame = nw.from_native(
+                        input_example
+                    ).to_polars()  # type: ignore
                 else:
                     input_example_df = None
 
@@ -175,23 +218,28 @@ class MLFlowTracker:
                     "model_type": model_name,
                     "framework": type(model).__module__,
                     "class": type(model).__name__,
-                    "input_example": input_example_df.shape
+                    "input_example": {
+                        "num_rows": input_example_df.shape[0],
+                        "num_cols": input_example_df.shape[1],
+                    }
                     if input_example_df is not None
                     else None,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
                 }
                 with open(metadata_path, "w") as f:
                     yaml.dump(metadata, f)
 
                 if input_example_df is not None:
                     with open(input_example_path, "w") as f:
-                        json.dump(input_example_df.to_dicts(), f, indent=4)
+                        json.dump(input_example_df.head(N).to_dicts(), f, indent=4)
 
                 # Log artifacts
                 artifact_path: str = f"models/{model_name}"
                 mlflow.log_artifact(model_path, artifact_path=artifact_path)  # type: ignore
-                mlflow.log_artifact(input_example_path, artifact_path=artifact_path)  # type: ignore
                 mlflow.log_artifact(metadata_path, artifact_path=artifact_path)  # type: ignore
+
+                if input_example_df is not None:
+                    mlflow.log_artifact(input_example_path, artifact_path=artifact_path)  # type: ignore
 
                 logger.info(f"✅ Successfully saved {model_name} model as artifact")
 
@@ -254,6 +302,7 @@ class MLFlowTracker:
         # Sync artifacts to S3 after run ends
         if run_id and status == "FINISHED":
             try:
+                # TODO: Implement S3 sync logic here
                 # Logic to sync artifacts to S3
 
                 # from .mlflow_s3_utils import MLflowS3Manager

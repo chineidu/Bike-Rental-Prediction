@@ -1,5 +1,6 @@
 import logging
 import sys
+from pathlib import Path
 
 
 def create_logger(
@@ -51,3 +52,8 @@ def create_logger(
         logger.addHandler(file_handler)
 
     return logger
+
+
+PACKAGE_PATH: Path = Path(__file__).parent.parent.absolute()
+
+__all__: list[str] = ["create_logger", "PACKAGE_PATH"]

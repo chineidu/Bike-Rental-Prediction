@@ -1,0 +1,87 @@
+config:
+  feature_config:
+    lag_features:
+      - { "feature": "cnt", "lags": [0, 1, 24] }
+      - { "feature": "hr", "lags": [1, 24] }
+      - { "feature": "temp", "lags": [1, 3] }
+      - { "feature": "hum", "lags": [1, 3] }
+    diff_features:
+      - { "feature": "cnt", "diffs": [1, 2] }
+      - { "feature": "hr", "diffs": [1, 24] }
+      - { "feature": "temp", "diffs": [1, 2, 24] }
+      - { "feature": "hum", "diffs": [1, 2] }
+    interaction_features:
+      - { "feature_1": "temp", "feature_2": "hum", "operation": "add" }
+      - { "feature_1": "hum", "feature_2": "hr", "operation": "add" }
+    rolling_features:
+      - { "feature": "temp", "windows": [3, 6] }
+      - { "feature": "hum", "windows": [3, 6] }
+    drop_features:
+      - "atemp"
+      - "windspeed"
+      - "casual"
+      - "registered"
+      - "datetime"
+      - "cnt"
+      - "yr"
+    target_col: "cnt"
+
+  experiment_config:
+    experiment_name: bike_rental_experiment
+    tracking_uri: "http://0.0.0.0:6060"
+
+  model_training_config:
+    general_config:
+      random_seed: 42
+      test_size: 0.2
+      cv_test_size: 168 # 1 week of hourly data
+      n_splits: 5
+      n_trials: 1
+    random_forest_config:
+      n_estimators: 100
+      max_depth: 10
+      min_samples_split: 2
+      min_samples_leaf: 1
+    xgboost_config:
+      n_estimators: 100
+      learning_rate: 0.1
+      max_depth: 6
+
+  optuna_config:
+    random_forest_optuna_config:
+      n_estimators: [50, 300]
+      max_depth: [3, 20]
+      min_samples_split: [2, 10]
+      min_samples_leaf: [1, 5]
+      max_features: [null, "sqrt", "log2"]
+      bootstrap: [true, false]
+    xgboost_optuna_config:
+      n_trials: 50
+      n_estimators: [50, 300]
+      learning_rate: [0.01, 0.3]
+      max_depth: [3, 20]
+      subsample: [0.5, 1.0]
+      colsample_bytree: [0.5, 1.0]
+
+  api_config:
+    title: Bike Rental Prediction API
+    name: ${.title}
+    description: API for predicting bike rental counts using a pre-trained model.
+    version: v0.0.1
+    status: healthy
+    prefix: /api/v1
+
+    # Server Settings
+    server:
+      host: 0.0.0.0
+      port: 8000
+      workers: 1
+      reload: false
+
+    # Middleware Configuration
+    middleware:
+      cors:
+        allow_origins: ["*"]
+        allow_credentials: true
+        allow_methods: ["*"]
+        allow_headers: ["*"]

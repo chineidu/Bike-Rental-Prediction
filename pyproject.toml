@@ -9,6 +9,7 @@ dependencies = [
     "mlflow>=3.4.0",
     "narwhals>=2.5.0",
     "numpy>=2.0",
+    "omegaconf>=2.3.0",
     "optuna>=4.5.0",
     "pandas>=2.3.2",
     "pendulum>=3.1.0",

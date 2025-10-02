@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Literal
 
 import narwhals as nw
@@ -6,36 +5,9 @@ import numpy as np
 import polars as pl
 from narwhals.typing import IntoDataFrameT
 
+from src.config.config import FeatureConfig
+
 from .utils import drop_features
-
-
-@dataclass
-class Lags:
-    feature: str
-    lags: list[int]
-
-
-@dataclass
-class InteractionFeats:
-    feature_1: str
-    feature_2: str
-    operation: Literal["add", "multiply"]
-
-
-@dataclass
-class Windows:
-    feature: str
-    windows: list[int]
-
-
-@dataclass
-class FeatureConfig:
-    lags: list[Lags]
-    diffs: list[Lags]
-    interactions: list[InteractionFeats]
-    rolling_windows: list[Windows]
-    drop_feats: list[str]
-    target_col: str
 
 
 class FeatureEngineer:
@@ -45,17 +17,6 @@ class FeatureEngineer:
     a set of commonly useful features (temporal, cyclical, lag, rolling, interaction,
     difference, and binary features), drops configured columns, and returns the result
     in the native input format.
-
-    Parameters
-    ----------
-    data : IntoDataFrameT
-        Input data in a type that can be converted to the neutral dataframe used
-        internally (e.g., pandas.DataFrame, numpy array, or other supported types).
-    config : FeatureConfig
-        Configuration object that controls which features to create. Expected fields
-        include (but are not limited to): lags, rolling_windows, interactions,
-        diffs, and drop_feats. Each entry should specify the target column(s) and
-        parameters for the transformation.
 
     Attributes
     ----------
@@ -71,57 +32,68 @@ class FeatureEngineer:
         create_all_features
     """
 
-    def __init__(self, data: IntoDataFrameT, config: FeatureConfig) -> None:
-        self.data: nw.DataFrame = nw.from_native(data)
-        self.config = config
+    def __init__(self) -> None:
+        pass
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(data_shape={self.data.shape}, config={self.config})"
+        return f"{self.__class__.__name__}()"
 
-    def _create_all_features(self) -> nw.DataFrame:
+    def _create_all_features(
+        self, data: IntoDataFrameT, config: FeatureConfig
+    ) -> nw.DataFrame:
         """Create and return a dataframe with all engineered features."""
-        data = create_temporal_features(self.data)
-        data = create_cyclical_features(data)
+        nw_data: nw.DataFrame = nw.from_native(data)
+        data_df = create_temporal_features(nw_data)
+        data_df = create_cyclical_features(data_df)
 
         # Lags
-        for lag in self.config.lags:
-            data = create_lag_features(data, target_col=lag.feature, lags=lag.lags)
+        for lag in config.lag_features:
+            data_df = create_lag_features(
+                data_df, target_col=lag.feature, lags=lag.lags
+            )
         # Rolling
-        for window in self.config.rolling_windows:
-            data = create_rolling_features(
-                data, target_col=window.feature, windows=window.windows
+        for window in config.rolling_features:
+            data_df = create_rolling_features(
+                data_df, target_col=window.feature, windows=window.windows
             )
         # Interactions
-        for interaction in self.config.interactions:
-            data = create_interaction_features(
-                data,
+        for interaction in config.interaction_features:
+            data_df = create_interaction_features(
+                data_df,
                 interaction.feature_1,
                 interaction.feature_2,
                 interaction.operation,
             )
         # Differences
-        for diff in self.config.diffs:
-            data = create_difference_features(
-                data, target_col=diff.feature, lags=diff.lags
+        for diff in config.diff_features:
+            data_df = create_difference_features(
+                data_df, target_col=diff.feature, lags=diff.diffs
             )
         # Binary features
-        data = create_binary_features(data)
+        data_df = create_binary_features(data_df)
         # Target variable
-        data = create_target_variable(data, target_col=self.config.target_col)
+        data_df = create_target_variable(data_df, target_col=config.target_col)
         # Fill missing values
-        data = fill_nulls(data, strategy="backward")
+        data_df = fill_nulls(data_df, strategy="backward")
         # Drop features
-        return drop_features(data, self.config.drop_feats)
+        return drop_features(data_df, config.drop_features)
 
-    def create_all_features(self) -> IntoDataFrameT:
+    def create_all_features(
+        self, data: IntoDataFrameT, config: FeatureConfig
+    ) -> IntoDataFrameT:
         """
         Create and return a dataframe with all engineered features.
 
         Parameters
         ----------
-        self
-            The instance on which the method is called. Expected to provide an
-            implementation of `_create_all_features()`.
+        data : IntoDataFrameT
+            Input data in a type that can be converted to the neutral dataframe used
+            internally (e.g., pandas.DataFrame, numpy array, or other supported types).
+        config : FeatureConfig
+            Configuration object that controls which features to create. Expected fields
+            include (but are not limited to): lags, rolling_windows, interactions,
+            diffs, and drop_feats. Each entry should specify the target column(s) and
+            parameters for the transformation.
 
         Returns
         -------
@@ -139,7 +111,7 @@ class FeatureEngineer:
         ValueError
             If feature construction fails due to invalid or inconsistent input data.
         """
-        self.data = self._create_all_features()
+        self.data = self._create_all_features(data=data, config=config)
         return self.data.to_native()
 
 

@@ -1,8 +1,12 @@
+from typing import Any
+
 import narwhals as nw
 import numpy as np
 import polars as pl
 from narwhals.typing import IntoDataFrameT
+from sklearn.base import BaseEstimator
 from sklearn.metrics._regression import mean_absolute_error, root_mean_squared_error
+from sklearn.model_selection import TimeSeriesSplit
 
 
 def split_temporal_data(
@@ -22,6 +26,27 @@ def split_temporal_data(
     )
 
     return (train_data.to_native(), test_data.to_native())
+
+
+def split_into_train_test(
+    train_df: IntoDataFrameT, test_df: IntoDataFrameT, target_col: str
+) -> dict[str, Any]:
+    """Split data into features and target for training and testing sets."""
+    x_train = train_df.drop(target_col).to_numpy()
+    y_train = train_df[target_col].to_numpy()
+
+    x_test = test_df.drop(target_col).to_numpy()
+    y_test = test_df[target_col].to_numpy()
+
+    columns = train_df.drop(target_col).columns
+
+    return {
+        "x_train": x_train,
+        "y_train": y_train,
+        "x_test": x_test,
+        "y_test": y_test,
+        "columns": columns,
+    }
 
 
 def compute_metrics(
@@ -110,5 +135,36 @@ def compute_autocorrelation(series: nw.Series, max_lag: int = 24) -> dict[int, f
 def drop_features(data: nw.DataFrame, features: list[str]) -> nw.DataFrame:
     """Drop specified features from the dataset."""
 
-    # nw_data: nw.DataFrame = nw.from_native(data)
     return data.drop(features)
+
+
+def cross_validate_sklearn_model(
+    tscv: TimeSeriesSplit,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    model: BaseEstimator,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    """Cross-validate a sklearn model using TimeSeriesSplit."""
+    all_rmse: list[float] = []
+    all_mae: list[float] = []
+    all_mape: list[float] = []
+
+    for i, (train_index, test_index) in enumerate(tscv.split(x_train), start=1):
+        if verbose:
+            print(f"Fold {i}:")
+        x_tr, x_val = x_train[train_index], x_train[test_index]
+        y_tr, y_val = y_train[train_index], y_train[test_index]
+
+        # Train and evaluate the model
+        model.fit(x_tr, y_tr)  # type: ignore
+        y_pred = model.predict(x_val)  # type: ignore
+        metrics = compute_metrics(y_val, y_pred)
+        if verbose:
+            print(f"Validation Metrics: {metrics}")
+
+        all_rmse.append(metrics.get("RMSE"))  # type: ignore
+        all_mae.append(metrics.get("MAE"))  # type: ignore
+        all_mape.append(metrics.get("MAPE"))  # type: ignore
+
+    return {"model": model, "RMSE": all_rmse, "MAE": all_mae, "MAPE": all_mape}
