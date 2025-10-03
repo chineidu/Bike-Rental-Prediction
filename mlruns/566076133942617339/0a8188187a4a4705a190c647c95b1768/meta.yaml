@@ -1,0 +1,14 @@
+artifact_uri: mlflow-artifacts:/566076133942617339/0a8188187a4a4705a190c647c95b1768/artifacts
+end_time: 1759532647504
+entry_point_name: ''
+experiment_id: '566076133942617339'
+lifecycle_stage: active
+run_id: 0a8188187a4a4705a190c647c95b1768
+run_name: run_2025-10-04T00:02:55
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1759532575921
+status: 3
+tags: []
+user_id: mac

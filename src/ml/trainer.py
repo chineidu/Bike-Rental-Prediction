@@ -281,15 +281,11 @@ class ModelTrainer:
             self.mlflow_tracker.log_metrics({"mean_mape": np.mean(mape).round(4)})
 
             # Log tags
-            self.mlflow_tracker.set_tags(
-                tags={
-                    "project": self.mlflow_tracker.experiment_name,
-                    "team": "mlops",
-                    "optimizer_engine": "optuna",
-                    "model_family": "RandomForest",
-                    "feature_set_version": 1,
-                }
+            tags: dict[str, Any] = (
+                app_config.experiment_config.experiment_tags.model_dump()
             )
+            tags["model_family"] = "RandomForest"
+            self.mlflow_tracker.set_tags(tags=tags)
 
             rf_reg = RandomForestRegressor(
                 **best_params,

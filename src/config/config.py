@@ -54,9 +54,24 @@ class FeatureConfig(BaseSchema):
     target_col: str = Field(..., description="Target column name")
 
 
+class ExperimentTags(BaseSchema):
+    project: str = Field(..., description="Project name")
+    team: str = Field(..., description="Team name")
+    owner: str = Field(..., description="Owner of the experiment")
+    optimizer_engine: Literal["optuna", "grid_search"] = Field(
+        ..., description="Optimizer engine used"
+    )
+    feature_set_version: int = Field(..., description="Feature set version")
+    metric_of_interest: Literal["RMSE", "MAE", "MAPE", "MSE"] = Field(
+        ..., description="Metric of interest"
+    )
+    hardware: Literal["cpu", "gpu"] = Field(..., description="Hardware used")
+
+
 class ExperimentConfig(BaseSchema):
     experiment_name: str = Field(..., description="Name of the experiment")
     tracking_uri: str = Field(..., description="Tracking URI for experiment tracking")
+    experiment_tags: ExperimentTags = Field(..., description="Tags for the experiment")
 
 
 class GeneralConfig(BaseSchema):

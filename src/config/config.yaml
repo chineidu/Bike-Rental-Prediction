@@ -27,8 +27,16 @@ config:
     target_col: "cnt"
 
   experiment_config:
-    experiment_name: bike_rental_experiment
+    experiment_name: bike_rental
     tracking_uri: "http://0.0.0.0:6060"
+    experiment_tags:
+      project: ${config.experiment_config.experiment_name}
+      team: data_science
+      owner: chinedu
+      optimizer_engine: optuna
+      feature_set_version: 1
+      metric_of_interest: RMSE
+      hardware: cpu
 
   model_training_config:
     general_config:
