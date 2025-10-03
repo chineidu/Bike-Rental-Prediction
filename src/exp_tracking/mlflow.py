@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Generator
 
+import httpx
 import joblib
 import mlflow
 import narwhals as nw
@@ -128,6 +129,10 @@ class MLFlowTracker:
         """Initialize the MLFlowTracker with a tracking URI and experiment name."""
         self.experiment_name = experiment_name
         self.tracking_uri = tracking_uri
+        if not self._test_tracking_server():
+            raise ConnectionError(
+                f"Cannot connect to MLflow tracking server at {tracking_uri}"
+            )
         mlflow.set_tracking_uri(tracking_uri)
         self._set_experiment()
         logger.info(
@@ -137,6 +142,16 @@ class MLFlowTracker:
     def __repr__(self) -> str:
         """Return string representation of the tracker."""
         return f"{self.__class__.__name__}(tracking_uri={self.tracking_uri}, experiment_name={self.experiment_name})"
+
+    def _test_tracking_server(self) -> bool:
+        try:
+            response = httpx.get(f"{self.tracking_uri}/#/experiments", timeout=5.0)
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(
+                f"Failed to connect to MLflow tracking server: {e}. Are you sure it's running?"
+            )
+            return False
 
     def _set_experiment(self) -> None:
         """Set the MLflow experiment. If it doesn't exist, create it."""

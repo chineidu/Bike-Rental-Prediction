@@ -2,6 +2,8 @@ from typing import Any
 
 import numpy as np
 import optuna
+import pandas as pd
+import xgboost as xgb
 from narwhals.typing import IntoDataFrameT
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import TimeSeriesSplit
@@ -89,7 +91,46 @@ class ModelTrainer:
 
     def _train_xgboost(self) -> dict[str, Any]:
         """Train an XGBoost model with time series cross-validation."""
-        return {}
+        data_dict: dict[str, Any] = self.data_dict
+        x_train, y_train = data_dict["x_train"], data_dict["y_train"]
+        dtrain_reg = xgb.DMatrix(x_train, y_train, enable_categorical=True)
+        params: dict[str, Any] = (
+            app_config.model_training_config.xgboost_config.model_dump()
+        )
+        print(params)
+        params["seed"] = self.random_seed
+        early_stopping_rounds: int | None = params.pop("early_stopping_rounds", None)
+        num_boost_round: int = params.pop("num_boost_round", 500)
+
+        # Cross-validation
+        cv_results: pd.DataFrame = xgb.cv(
+            params=params,
+            dtrain=dtrain_reg,
+            num_boost_round=num_boost_round,
+            nfold=self.n_splits,
+            metrics={"rmse"},
+            seed=self.random_seed,
+            as_pandas=True,
+            callbacks=[
+                xgb.callback.EvaluationMonitor(show_stdv=True),  # type: ignore
+                xgb.callback.EarlyStopping(rounds=early_stopping_rounds),  # type: ignore
+            ],
+        )
+        best_num_rounds: int = len(cv_results)
+        final_model: xgb.Booster = xgb.train(
+            params=params,
+            dtrain=dtrain_reg,
+            num_boost_round=best_num_rounds,
+        )
+
+        return {
+            "model": final_model,
+            "metrics": {
+                "RMSE": cv_results["test-rmse-mean"].tolist(),
+                "MAE": None,  # Placeholder, implement if needed
+                "MAPE": None,  # Placeholder, implement if needed
+            },
+        }
 
     def _train_lightgbm(self) -> dict[str, Any]:
         """Train a LightGBM model with time series cross-validation."""

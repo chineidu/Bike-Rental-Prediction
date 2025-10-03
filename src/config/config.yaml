@@ -45,7 +45,9 @@ config:
     xgboost_config:
       n_estimators: 100
       learning_rate: 0.1
+      early_stopping_rounds: 10
       max_depth: 6
+      num_boost_round: 500
 
   optuna_config:
     random_forest_optuna_config:

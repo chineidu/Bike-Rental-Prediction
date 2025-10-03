@@ -181,6 +181,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "holidays" },
+    { name = "httpx" },
     { name = "mlflow" },
     { name = "narwhals" },
     { name = "numpy" },
@@ -208,6 +209,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "holidays", specifier = ">=0.81" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "mlflow", specifier = ">=3.4.0" },
     { name = "narwhals", specifier = ">=2.5.0" },
     { name = "numpy", specifier = ">=2.0" },

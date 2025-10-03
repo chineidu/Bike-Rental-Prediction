@@ -128,6 +128,8 @@ class XGBoostConfig(BaseSchema):
     n_estimators: int = Field(..., description="Number of trees in the ensemble")
     learning_rate: float = Field(..., description="Learning rate")
     max_depth: int = Field(..., description="Maximum depth of the trees")
+    early_stopping_rounds: int | None = Field(None, description="Early stopping rounds")
+    num_boost_round: int = Field(500, description="Number of boosting rounds")
 
 
 class ModelTrainingConfig(BaseSchema):
