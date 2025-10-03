@@ -60,7 +60,7 @@ class ModelTrainer:
         self.input_example = train_df
         return data_dict
 
-    def train_random_forest(self) -> dict[str, Any]:
+    def _train_random_forest(self) -> dict[str, Any]:
         """Train a Random Forest model with time series cross-validation."""
 
         tscv = TimeSeriesSplit(
@@ -87,16 +87,13 @@ class ModelTrainer:
             },
         }
 
-    def train_xgboost(self) -> dict[str, Any]:
+    def _train_xgboost(self) -> dict[str, Any]:
         """Train an XGBoost model with time series cross-validation."""
         return {}
 
-    def train_lightgbm(self) -> dict[str, Any]:
+    def _train_lightgbm(self) -> dict[str, Any]:
         """Train a LightGBM model with time series cross-validation."""
         return {}
-
-    def _hyperparameter_tuning_random_forest(self) -> None:
-        pass
 
     def _hyperparameter_tuning_xgboost(self) -> None:
         pass
@@ -106,6 +103,54 @@ class ModelTrainer:
 
     def train_model(self) -> None:
         return
+
+    @staticmethod
+    def champion_callback(
+        study: optuna.study.Study, frozen_trial: optuna.trial.FrozenTrial
+    ) -> None:
+        """
+        Callback that logs when a trial improves the current best value for an Optuna study.
+
+        Parameters
+        ----------
+        study : optuna.study.Study
+            The Optuna Study object being optimized.
+        frozen_trial : optuna.trial.FrozenTrial
+            The completed trial.
+
+        Returns
+        -------
+        None
+            This callback does not return a value.
+
+        Notes
+        -----
+        This function updates ``study.user_attrs['winner']`` when a new best value is found and
+        logs either an initial-trial message or the percentage improvement; avoid using this
+        callback in distributed execution environments due to potential race conditions when
+        reading/updating ``study.user_attrs``.
+        """
+        winner = study.user_attrs.get("winner", None)
+
+        # Only respond when there is a best value to compare
+        if study.best_value is not None and winner != study.best_value:
+            study.set_user_attr("winner", study.best_value)
+            if winner is not None:
+                # protect against division by zero
+                if study.best_value == 0:
+                    improvement_percent = float("inf")
+                else:
+                    improvement_percent = (
+                        abs(winner - study.best_value) / abs(study.best_value)
+                    ) * 100
+                logger.info(
+                    f"Trial {frozen_trial.number} achieved value: {frozen_trial.value} with "
+                    f"{improvement_percent:.4f}% improvement",
+                )
+            else:
+                logger.info(
+                    f"Initial trial {frozen_trial.number} achieved value: {frozen_trial.value}"
+                )
 
     def objective_random_forest(self, trial: optuna.Trial) -> float:
         """Objective function for Optuna hyperparameter optimization using TimeSeriesSplit."""
@@ -164,7 +209,7 @@ class ModelTrainer:
 
         return mean_rmse  # type: ignore
 
-    def hyperparameter_tuning_random_forest(self) -> None:
+    def _hyperparameter_tuning_random_forest(self) -> None:
         """
         Perform hyperparameter tuning for a RandomForestRegressor using Optuna and log results to MLflow.
         """
@@ -173,7 +218,11 @@ class ModelTrainer:
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=self.random_seed),
             )
-            study.optimize(self.objective_random_forest, n_trials=self.n_trials)
+            study.optimize(
+                self.objective_random_forest,
+                n_trials=self.n_trials,
+                callbacks=[self.champion_callback],
+            )
             print("Best trial:")
             best_trial = study.best_trial
             best_params: dict[str, Any] = best_trial.params

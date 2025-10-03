@@ -25,42 +25,107 @@ class ArtifactsType(str, Enum):
     JSON = "json"
     TXT = "txt"
     YAML = "yaml"
-    ANY = "joblib"
+    PICKLE = "pkl"  # More explicit than "ANY"
 
     def __str__(self) -> str:
         return str(self.value)
 
 
-def write_json(object: dict[str, Any] | Any, filepath: Path, indent: int = 2) -> None:
-    """Write a dictionary or any JSON-serializable object to a JSON file."""
-    with open(filepath, "w") as f:
-        json.dump(object, fp=f, indent=indent)
+def write_json(obj: dict[str, Any] | Any, filepath: Path, indent: int = 2) -> None:
+    """
+    Write a dictionary or any JSON-serializable object to a JSON file.
+
+    Parameters
+    ----------
+    obj : dict[str, Any] | Any
+        Object to serialize to JSON.
+    filepath : Path
+        Destination file path.
+    indent : int, default=2
+        JSON indentation level.
+
+    Raises
+    ------
+    TypeError
+        If object is not JSON serializable.
+    """
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=indent)
 
 
-def write_txt(object: list[Any], filepath: Path) -> None:
-    """Write a list of strings to a text file, each on a new line."""
-    with open(filepath, "w") as f:
-        for line in object:
-            f.write(line + "\n")
+def write_txt(obj: list[Any], filepath: Path) -> None:
+    """
+    Write a list of strings to a text file, each on a new line.
+
+    Parameters
+    ----------
+    obj : list[Any]
+        List of items to write (will be converted to strings).
+    filepath : Path
+        Destination file path.
+    """
+    with open(filepath, "w", encoding="utf-8") as f:
+        for line in obj:
+            f.write(f"{line}\n")
 
 
-def write_yaml(object: dict[str, Any] | Any, filepath: Path) -> None:
-    """Write a dictionary or any YAML-serializable object to a YAML file."""
-    with open(filepath, "w") as f:
-        yaml.dump(object, f)
+def write_yaml(obj: dict[str, Any] | Any, filepath: Path) -> None:
+    """
+    Write a dictionary or any YAML-serializable object to a YAML file.
+
+    Parameters
+    ----------
+    obj : dict[str, Any] | Any
+        Object to serialize to YAML.
+    filepath : Path
+        Destination file path.
+    """
+    with open(filepath, "w", encoding="utf-8") as f:
+        yaml.dump(obj, f, default_flow_style=False, sort_keys=False)
 
 
-def write_pickle(object: dict[str, Any] | Any, filepath: Path) -> None:
-    """Write any object to a file using joblib."""
-    joblib.dump(object, filepath)
+def write_pickle(obj: Any, filepath: Path) -> None:
+    """
+    Write any object to a file using joblib.
+
+    Parameters
+    ----------
+    obj : Any
+        Object to pickle.
+    filepath : Path
+        Destination file path.
+    """
+    joblib.dump(obj, filepath)
 
 
 class MLFlowTracker:
+    """
+    MLflow tracking utility for logging experiments, models, and artifacts.
+
+    This class provides a simplified interface for MLflow tracking operations,
+    including experiment management, run tracking, and artifact logging.
+
+    Parameters
+    ----------
+    tracking_uri : str
+        MLflow tracking server URI (e.g., "http://localhost:5000").
+    experiment_name : str
+        Name of the MLflow experiment to use or create.
+
+    Examples
+    --------
+    >>> tracker = MLFlowTracker(
+    ...     tracking_uri="http://localhost:5000",
+    ...     experiment_name="bike_rental_prediction"
+    ... )
+    >>> with tracker.start_run(run_name="baseline_model") as run_id:
+    ...     tracker.log_params({"learning_rate": 0.1})
+    ...     tracker.log_metrics({"rmse": 2.5, "mae": 1.8})
+    ...     tracker.log_model(model, "xgboost")
+    """
+
     def __init__(self, tracking_uri: str, experiment_name: str) -> None:
-        """
-        Initialize the MLFlowTracker with a tracking URI and experiment name.
-        This sets up the MLflow tracking server and experiment.
-        """
+        """Initialize the MLFlowTracker with a tracking URI and experiment name."""
         self.experiment_name = experiment_name
         self.tracking_uri = tracking_uri
         mlflow.set_tracking_uri(tracking_uri)
@@ -70,18 +135,32 @@ class MLFlowTracker:
         )
 
     def __repr__(self) -> str:
+        """Return string representation of the tracker."""
         return f"{self.__class__.__name__}(tracking_uri={self.tracking_uri}, experiment_name={self.experiment_name})"
 
     def _set_experiment(self) -> None:
         """Set the MLflow experiment. If it doesn't exist, create it."""
         try:
             mlflow.set_experiment(self.experiment_name)
-
+            logger.debug(f"Set experiment to: {self.experiment_name}")
         except Exception as e:
             logger.warning(f"Failed to set experiment {self.experiment_name}: {e}")
+            raise
 
     def _get_run_name(self, run_name: str | None = None) -> str:
-        """Generate a default run name if none is provided."""
+        """
+        Generate a default run name if none is provided.
+
+        Parameters
+        ----------
+        run_name : str, optional
+            Custom run name. If None, generates a timestamp-based name.
+
+        Returns
+        -------
+        str
+            Run name to use.
+        """
         if run_name is None:
             run_name = f"run_{datetime.now().isoformat(timespec='seconds')}"
         return run_name
@@ -100,8 +179,8 @@ class MLFlowTracker:
         ----------
         run_name : str, optional
             Name of the run to start. If not provided, a default name will be generated.
-        nested : bool, optional
-            Whether the run is nested within another run. Defaults to False.
+        nested : bool, default=False
+            Whether the run is nested within another run.
         tags : dict[str, str], optional
             Tags to be added to the run.
 
@@ -109,11 +188,17 @@ class MLFlowTracker:
         ------
         str
             ID of the started run.
+
+        Examples
+        --------
+        >>> with tracker.start_run(run_name="experiment_1") as run_id:
+        ...     tracker.log_params({"n_estimators": 100})
+        ...     print(f"Run ID: {run_id}")
         """
         run_name = self._get_run_name(run_name)
         run = mlflow.start_run(run_name=run_name, tags=tags, nested=nested)  # type: ignore
         run_id = run.info.run_id
-        logger.info(f"Started MLflow run: {run_id}")
+        logger.info(f"Started MLflow run: {run_id} (name: {run_name})")
 
         try:
             yield run_id
@@ -121,7 +206,7 @@ class MLFlowTracker:
             self.end_run(status="FINISHED")
 
         except Exception as e:
-            logger.error(f"Exception during MLflow run {run_id}: {e}")
+            logger.error(f"Exception during MLflow run {run_id}: {e}", exc_info=True)
             # End run as failed and re-raise
             try:
                 self.end_run(status="FAILED")
@@ -136,9 +221,27 @@ class MLFlowTracker:
         Parameters
         ----------
         params : dict[str, Any]
-            Parameters to log.
+            Parameters to log. Values will be converted to strings.
+
+        Notes
+        -----
+        MLflow has a limit of 500 parameters per run. Parameter values
+        are truncated at 500 characters.
+
+        Examples
+        --------
+        >>> tracker.log_params({
+        ...     "learning_rate": 0.1,
+        ...     "max_depth": 6,
+        ...     "n_estimators": 100
+        ... })
         """
-        mlflow.log_params(params)  # type: ignore
+        try:
+            mlflow.log_params(params)  # type: ignore
+            logger.debug(f"Logged {len(params)} parameters")
+        except Exception as e:
+            logger.error(f"Failed to log parameters: {e}")
+            raise
 
     def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
         """
@@ -147,11 +250,24 @@ class MLFlowTracker:
         Parameters
         ----------
         metrics : dict[str, float]
-            Metrics to log.
+            Metrics to log. Keys are metric names, values are numeric.
         step : int, optional
-            Step at which the metrics are logged.
+            Step at which the metrics are logged (useful for iterative training).
+
+        Examples
+        --------
+        >>> tracker.log_metrics({"rmse": 2.5, "mae": 1.8, "r2": 0.85})
+        >>> # Log metrics at a specific training step
+        >>> tracker.log_metrics({"train_loss": 0.5}, step=100)
         """
-        mlflow.log_metrics(metrics, step=step)  # type: ignore
+        try:
+            mlflow.log_metrics(metrics, step=step)  # type: ignore
+            logger.debug(
+                f"Logged {len(metrics)} metrics" + (f" at step {step}" if step else "")
+            )
+        except Exception as e:
+            logger.error(f"Failed to log metrics: {e}")
+            raise
 
     def set_tags(self, tags: dict[str, Any]) -> None:
         """
@@ -159,125 +275,239 @@ class MLFlowTracker:
 
         Parameters
         ----------
-        tags : dict[str, str]
-            Dictionary of tags to set.
+        tags : dict[str, Any]
+            Dictionary of tags to set. Values will be converted to strings.
+
+        Examples
+        --------
+        >>> tracker.set_tags({
+        ...     "model_type": "xgboost",
+        ...     "dataset_version": "v2",
+        ...     "author": "data_scientist"
+        ... })
         """
-        mlflow.set_tags(tags)  # type: ignore
+        try:
+            mlflow.set_tags(tags)  # type: ignore
+            logger.debug(f"Set {len(tags)} tags")
+        except Exception as e:
+            logger.error(f"Failed to set tags: {e}")
+            raise
 
     def log_model(
         self,
         model: Any,
         model_name: str,
-        input_example: IntoDataFrameT | None = None,  # noqa: ARG002
+        input_example: IntoDataFrameT | None = None,
         signature: Any | None = None,  # noqa: ARG002
         registered_model_name: str | None = None,  # noqa: ARG002
+        save_format: ArtifactsType = ArtifactsType.PICKLE,
     ) -> None:
         """
-        Log model to MLflow with compatibility for different versions.
+        Log model to MLflow as an artifact with metadata.
 
         Parameters
         ----------
         model : Any
-            Model to log.
+            Model object to log.
         model_name : str
-            Name of the model to log.
-        input_example : pd.DataFrame, optional
-            Example input to be used for logging model signature.
+            Name for the model artifact.
+        input_example : IntoDataFrameT, optional
+            Example input data for the model (DataFrame-like).
         signature : Any, optional
-            Model signature to be used for logging.
+            Model signature (currently unused, reserved for future use).
         registered_model_name : str, optional
-            Name of the registered model to log.
+            Name for model registry (currently unused, reserved for future use).
+        save_format : ArtifactsType, default=ArtifactsType.PICKLE
+            Format to save the model. Options: PICKLE, JSON (for XGBoost/LightGBM).
 
+        Notes
+        -----
+        - Saves model file, metadata (YAML), and input example (JSON) as artifacts
+        - For XGBoost/LightGBM models, use `save_format=ArtifactsType.JSON`
+        - Models are saved in `models/{model_name}/` directory
+
+        Examples
+        --------
+        >>> # Log sklearn model
+        >>> tracker.log_model(
+        ...     model=rf_model,
+        ...     model_name="random_forest",
+        ...     input_example=X_test
+        ... )
+
+        >>> # Log XGBoost model in JSON format
+        >>> tracker.log_model(
+        ...     model=xgb_model,
+        ...     model_name="xgboost",
+        ...     save_format=ArtifactsType.JSON,
+        ...     input_example=X_test
+        ... )
         """
         datetime_now: str = datetime.now().isoformat(timespec="seconds")
-        N: int = 5
+        n_example_rows: int = 5
+
         try:
-            # Save model to a temporary file first
             with tempfile.TemporaryDirectory() as tmpdir:
-                model_path = Path(tmpdir, f"{model_name}_{datetime_now}_model.pkl")
-                input_example_path = Path(
-                    tmpdir, f"{model_name}_{datetime_now}_input_example.json"
-                )
-                metadata_path = Path(
-                    tmpdir, f"{model_name}_{datetime_now}_metadata.yaml"
-                )
+                tmpdir_path = Path(tmpdir)
 
-                # Save model
-                joblib.dump(model, model_path)
-
-                # Format input data example if provided
-                if input_example is not None:
-                    input_example_df: pl.DataFrame = nw.from_native(
-                        input_example
-                    ).to_polars()  # type: ignore
+                # Determine model file extension and path
+                if save_format == ArtifactsType.JSON:
+                    model_ext: str = "json"
                 else:
-                    input_example_df = None
+                    model_ext = "pkl"
 
-                # Create metadata
-                metadata = {
+                model_path = (
+                    tmpdir_path / f"{model_name}_{datetime_now}_model.{model_ext}"
+                )
+                input_example_path = (
+                    tmpdir_path / f"{model_name}_{datetime_now}_input_example.json"
+                )
+                metadata_path = (
+                    tmpdir_path / f"{model_name}_{datetime_now}_metadata.yaml"
+                )
+
+                # Save model based on format
+                if save_format == ArtifactsType.PICKLE:
+                    joblib.dump(model, model_path)
+                    logger.debug(f"Saved model as pickle: {model_path.name}")
+
+                elif save_format == ArtifactsType.JSON:
+                    if not hasattr(model, "save_model"):
+                        raise AttributeError(
+                            f"Model {type(model).__name__} does not have a 'save_model' method. "
+                            "Use ArtifactsType.PICKLE instead."
+                        )
+                    model.save_model(str(model_path))
+                    logger.debug(f"Saved model as JSON: {model_path.name}")
+                else:
+                    raise ValueError(f"Unsupported save format: {save_format}")
+
+                # Process input example if provided
+                input_example_df: pl.DataFrame | None = None
+                if input_example is not None:
+                    try:
+                        input_example_df = nw.from_native(input_example).to_polars()
+                    except Exception as e:
+                        logger.warning(f"Failed to convert input example: {e}")
+
+                # Create comprehensive metadata
+                metadata: dict[str, Any] = {
                     "model_type": model_name,
                     "framework": type(model).__module__,
                     "class": type(model).__name__,
-                    "input_example": {
+                    "save_format": str(save_format),
+                    "timestamp": datetime_now,
+                }
+
+                # Add input example info if available
+                if input_example_df is not None:
+                    metadata["input_example"] = {
                         "num_rows": input_example_df.shape[0],
                         "num_cols": input_example_df.shape[1],
+                        "columns": input_example_df.columns,
+                        "dtypes": {
+                            col: str(dtype)
+                            for col, dtype in zip(
+                                input_example_df.columns, input_example_df.dtypes
+                            )
+                        },
                     }
-                    if input_example_df is not None
-                    else None,
-                    "timestamp": datetime.now().isoformat(timespec="seconds"),
-                }
-                with open(metadata_path, "w") as f:
-                    yaml.dump(metadata, f)
 
+                # Add model-specific metadata
+                if hasattr(model, "get_params"):
+                    try:
+                        metadata["model_params"] = model.get_params()
+                    except Exception as e:
+                        logger.warning(f"Failed to extract model params: {e}")
+
+                # Write metadata
+                write_yaml(metadata, metadata_path)
+
+                # Write input example
                 if input_example_df is not None:
-                    with open(input_example_path, "w") as f:
-                        json.dump(input_example_df.head(N).to_dicts(), f, indent=4)
+                    example_data = input_example_df.head(n_example_rows).to_dicts()
+                    write_json(example_data, input_example_path)
 
-                # Log artifacts
+                # Log all artifacts to MLflow
                 artifact_path: str = f"models/{model_name}"
-                mlflow.log_artifact(model_path, artifact_path=artifact_path)  # type: ignore
-                mlflow.log_artifact(metadata_path, artifact_path=artifact_path)  # type: ignore
+                mlflow.log_artifact(str(model_path), artifact_path=artifact_path)  # type: ignore
+                mlflow.log_artifact(str(metadata_path), artifact_path=artifact_path)  # type: ignore
 
                 if input_example_df is not None:
-                    mlflow.log_artifact(input_example_path, artifact_path=artifact_path)  # type: ignore
+                    mlflow.log_artifact(
+                        str(input_example_path), artifact_path=artifact_path
+                    )  # type: ignore
 
-                logger.info(f"✅ Successfully saved {model_name} model as artifact")
+                logger.info(f"✅ Successfully logged {model_name} model and metadata")
 
         except Exception as e:
-            logger.error(f"❌ Failed to log model {model_name}: {e}")
+            logger.error(f"❌ Failed to log model {model_name}: {e}", exc_info=True)
+            raise
 
     def log_mlflow_artifact(
         self,
-        object: Any,
+        obj: Any,
         object_type: ArtifactsType,
         filename: str,
         artifact_dest: str | None = None,
     ) -> None:
         """
-        Log a local file to MLflow.
+        Log an arbitrary object as an MLflow artifact.
 
         Parameters
         ----------
-        local_path : str
-            Path to the local file to log.
-        artifact_dest : str | None
-            (Optional) Run-relative directory in the MLflow artifact store.
+        obj : Any
+            Object to log (dict, list, or any picklable object).
+        object_type : ArtifactsType
+            Type of artifact (JSON, TXT, YAML, or PICKLE).
+        filename : str
+            Base filename for the artifact (without extension).
+        artifact_dest : str, optional
+            Subdirectory path within the artifact store.
+
+        Examples
+        --------
+        >>> # Log configuration as YAML
+        >>> tracker.log_mlflow_artifact(
+        ...     obj={"batch_size": 32, "epochs": 10},
+        ...     object_type=ArtifactsType.YAML,
+        ...     filename="config",
+        ...     artifact_dest="configs"
+        ... )
+
+        >>> # Log feature names as JSON
+        >>> tracker.log_mlflow_artifact(
+        ...     obj={"features": ["age", "income", "score"]},
+        ...     object_type=ArtifactsType.JSON,
+        ...     filename="features"
+        ... )
         """
-        if object_type == ArtifactsType.JSON:
-            write_fn: WriteFn = write_json
-        elif object_type == ArtifactsType.TXT:
-            write_fn = write_txt
-        elif object_type == ArtifactsType.YAML:
-            write_fn = write_yaml
-        elif object_type == ArtifactsType.ANY:
-            write_fn = write_pickle
-        else:
+        # Map artifact type to write function
+        write_fn_map: dict[ArtifactsType, WriteFn] = {
+            ArtifactsType.JSON: write_json,
+            ArtifactsType.TXT: write_txt,
+            ArtifactsType.YAML: write_yaml,
+            ArtifactsType.PICKLE: write_pickle,
+        }
+
+        if object_type not in write_fn_map:
             raise ValueError(f"Unsupported object type: {object_type}")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir) / f"{filename}-artifact.{object_type}"
-            write_fn(object, tmp_path)
-            mlflow.log_artifact(tmp_path, artifact_path=artifact_dest)  # type: ignore
+        write_fn: WriteFn = write_fn_map[object_type]
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Create filename with proper extension
+                tmp_path = Path(tmpdir) / f"{filename}.{object_type}"
+                write_fn(obj, tmp_path)
+                mlflow.log_artifact(str(tmp_path), artifact_path=artifact_dest)  # type: ignore
+
+                dest_info = f" to {artifact_dest}" if artifact_dest else ""
+                logger.debug(f"Logged artifact: {tmp_path.name}{dest_info}")
+
+        except Exception as e:
+            logger.error(f"Failed to log artifact {filename}: {e}", exc_info=True)
+            raise
 
     def end_run(self, status: str = "FINISHED") -> None:
         """
@@ -285,31 +515,40 @@ class MLFlowTracker:
 
         Parameters
         ----------
-        status : str
-            Status to end the run with. Defaults to "FINISHED".
+        status : str, default="FINISHED"
+            Status to end the run with. Options: "FINISHED", "FAILED", "KILLED".
 
         Notes
         -----
-        If the run is successful, the artifacts will be synced to S3.
+        - Automatically called by the context manager on normal exit
+        - If status is "FINISHED", attempts to sync artifacts to S3 (if configured)
+
+        Examples
+        --------
+        >>> # Manual run management (not recommended)
+        >>> mlflow.start_run()
+        >>> tracker.log_metrics({"accuracy": 0.95})
+        >>> tracker.end_run(status="FINISHED")
         """
-        # Get run ID before ending
         run = mlflow.active_run()
         run_id = run.info.run_id if run else None
 
-        mlflow.end_run(status=status)  # type: ignore
-        logger.info("🚨 Ended MLflow run")
+        try:
+            mlflow.end_run(status=status)  # type: ignore
+            logger.info(f"Ended MLflow run with status: {status}")
 
-        # Sync artifacts to S3 after run ends
-        if run_id and status == "FINISHED":
-            try:
-                # TODO: Implement S3 sync logic here
-                # Logic to sync artifacts to S3
+            # Sync artifacts to S3 if run was successful
+            if run_id and status == "FINISHED":
+                try:
+                    # TODO: Implement S3 sync logic here
+                    # from .mlflow_s3_utils import MLflowS3Manager
+                    # s3_manager = MLflowS3Manager()
+                    # s3_manager.sync_mlflow_artifacts_to_s3(run_id)
+                    # logger.info(f"✅ Synced artifacts to S3 for run {run_id}")
+                    pass
+                except Exception as e:
+                    logger.warning(f"❌ Failed to sync artifacts to S3: {e}")
 
-                # from .mlflow_s3_utils import MLflowS3Manager
-                # s3_manager = MLflowS3Manager()
-                # s3_manager.sync_mlflow_artifacts_to_s3(run_id)
-
-                logger.info(f"✅ Synced artifacts to S3 for run {run_id}")
-
-            except Exception as e:
-                logger.warning(f"❌ Failed to sync artifacts to S3: {e}")
+        except Exception as e:
+            logger.error(f"Failed to end run: {e}")
+            raise
