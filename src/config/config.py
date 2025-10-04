@@ -120,31 +120,36 @@ class RandomForestOptunaConfig(BaseSchema):
     bootstrap: list[bool] = Field(..., description="Options for bootstrap sampling")
 
 
+class XGBoostConfig(BaseSchema):
+    objective: str = Field(..., description="Objective function")
+    n_estimators: int = Field(..., description="Number of trees in the ensemble")
+    learning_rate: float = Field(..., description="Learning rate")
+    early_stopping_rounds: int | None = Field(None, description="Early stopping rounds")
+    num_boost_round: int = Field(500, description="Number of boosting rounds")
+
+
 class XGBoostOptunaConfig(BaseSchema):
-    n_trials: int = Field(
-        ..., description="Number of Optuna trials for hyperparameter optimization"
+    objective: str = Field(..., description="Objective function")
+    eval_metric: str = Field(..., description="Evaluation metric")
+    booster: list[Literal["gbtree", "gblinear", "dart"]] = Field(
+        ..., description="Booster type"
     )
-    n_estimators: tuple[int, int] = Field(
-        ..., description="Range for number of estimators"
+    lambda_: tuple[float, float] = Field(
+        ..., description="Range for L2 regularization term on weights"
     )
-    learning_rate: tuple[float, float] = Field(
-        ..., description="Range for learning rate"
+    alpha: tuple[float, float] = Field(
+        ..., description="Range for L1 regularization term on weights"
     )
     max_depth: tuple[int, int] = Field(
         ..., description="Range for maximum depth of the trees"
     )
-    subsample: tuple[float, float] = Field(..., description="Range for subsample ratio")
-    colsample_bytree: tuple[float, float] = Field(
-        ..., description="Range for column sample by tree"
+    eta: tuple[float, float] = Field(..., description="Range for learning rate")
+    gamma: tuple[float, float] = Field(
+        ..., description="Range for L2 regularization term on weights"
     )
-
-
-class XGBoostConfig(BaseSchema):
-    n_estimators: int = Field(..., description="Number of trees in the ensemble")
-    learning_rate: float = Field(..., description="Learning rate")
-    max_depth: int = Field(..., description="Maximum depth of the trees")
-    early_stopping_rounds: int | None = Field(None, description="Early stopping rounds")
-    num_boost_round: int = Field(500, description="Number of boosting rounds")
+    grow_policy: tuple[
+        Literal["depthwise", "lossguide"], Literal["depthwise", "lossguide"]
+    ] = Field(..., description="Options for grow policy")
 
 
 class ModelTrainingConfig(BaseSchema):

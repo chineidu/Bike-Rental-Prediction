@@ -146,7 +146,9 @@ class MLFlowTracker:
     def _test_tracking_server(self) -> bool:
         try:
             response = httpx.get(f"{self.tracking_uri}/#/experiments", timeout=5.0)
+            logger.debug(f"MLflow tracking server is reachable at {self.tracking_uri}")
             return response.status_code == 200
+
         except Exception as e:
             logger.error(
                 f"Failed to connect to MLflow tracking server: {e}. Are you sure it's running?"
@@ -461,7 +463,7 @@ class MLFlowTracker:
 
     def log_mlflow_artifact(
         self,
-        obj: Any,
+        object: Any,
         object_type: ArtifactsType,
         filename: str,
         artifact_dest: str | None = None,
@@ -471,7 +473,7 @@ class MLFlowTracker:
 
         Parameters
         ----------
-        obj : Any
+        object : Any
             Object to log (dict, list, or any picklable object).
         object_type : ArtifactsType
             Type of artifact (JSON, TXT, YAML, or PICKLE).
@@ -484,7 +486,7 @@ class MLFlowTracker:
         --------
         >>> # Log configuration as YAML
         >>> tracker.log_mlflow_artifact(
-        ...     obj={"batch_size": 32, "epochs": 10},
+        ...     object={"batch_size": 32, "epochs": 10},
         ...     object_type=ArtifactsType.YAML,
         ...     filename="config",
         ...     artifact_dest="configs"
@@ -492,7 +494,7 @@ class MLFlowTracker:
 
         >>> # Log feature names as JSON
         >>> tracker.log_mlflow_artifact(
-        ...     obj={"features": ["age", "income", "score"]},
+        ...     object={"features": ["age", "income", "score"]},
         ...     object_type=ArtifactsType.JSON,
         ...     filename="features"
         ... )
@@ -514,7 +516,7 @@ class MLFlowTracker:
             with tempfile.TemporaryDirectory() as tmpdir:
                 # Create filename with proper extension
                 tmp_path = Path(tmpdir) / f"{filename}.{object_type}"
-                write_fn(obj, tmp_path)
+                write_fn(object, tmp_path)
                 mlflow.log_artifact(str(tmp_path), artifact_path=artifact_dest)  # type: ignore
 
                 dest_info = f" to {artifact_dest}" if artifact_dest else ""

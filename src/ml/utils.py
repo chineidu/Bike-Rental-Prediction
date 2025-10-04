@@ -1,10 +1,12 @@
-from typing import Any
+from typing import Any, Literal
 
 import narwhals as nw
 import numpy as np
 import polars as pl
+import xgboost as xgb
 from narwhals.typing import IntoDataFrameT
 from sklearn.base import BaseEstimator
+from sklearn.metrics import r2_score
 from sklearn.metrics._regression import mean_absolute_error, root_mean_squared_error
 from sklearn.model_selection import TimeSeriesSplit
 
@@ -49,9 +51,42 @@ def split_into_train_test(
     }
 
 
+def adjusted_r2_score(y_true: np.ndarray, y_pred: np.ndarray, n_features: int) -> float:
+    """
+    Calculate the adjusted R-squared using sklearn's r2_score.
+
+    Parameters
+    ----------
+    y_true : array-like of shape (n_samples,)
+        Ground truth (correct) target values.
+    y_pred : array-like of shape (n_samples,)
+        Estimated target values.
+    n_features : int
+        Number of independent variables (features) used in the model.
+
+    Returns
+    -------
+    float
+        Adjusted R-squared value.
+
+    Notes
+    -----
+    The adjusted R-squared is computed as:
+
+    1 - (1 - R^2) * (n - 1) / (n - p - 1)
+
+    where n is the number of observations and p is the number of features.
+    """
+    n = len(y_true)
+    r2 = r2_score(y_true, y_pred)
+    return 1 - (1 - r2) * (n - 1) / (n - n_features - 1)
+
+
 def compute_metrics(
-    y_true: np.ndarray | list[float | int], y_pred: np.ndarray | list[float | int]
-) -> dict[str, float]:
+    y_true: np.ndarray | list[float | int],
+    y_pred: np.ndarray | list[float | int],
+    n_features: int | None = None,
+) -> dict[str, float | None]:
     """
     Compute evaluation metrics between true and predicted values.
 
@@ -59,6 +94,7 @@ def compute_metrics(
     - MAPE: Mean Absolute Percentage Error (in %)
     - MAE: Mean Absolute Error
     - RMSE: Root Mean Squared Error
+    - Adjusted R² (if n_features is provided)
 
     Parameters:
     ----------
@@ -66,11 +102,14 @@ def compute_metrics(
         Ground truth values.
     y_pred : array-like
         Predicted values.
+    n_features : int, optional
+        Number of features used in the model (required for Adjusted R²).
 
     Returns:
     -------
     dict
-        Dictionary with keys 'MAPE', 'MAE', and 'RMSE' and their float values.
+        Dictionary with keys 'MAPE', 'MAE', 'RMSE', and 'Adjusted_R2' (if n_features is provided)
+        and their float values.
     """
     mae = mean_absolute_error(y_true, y_pred)
     rmse = root_mean_squared_error(y_true, y_pred)
@@ -82,10 +121,14 @@ def compute_metrics(
         np.mean(np.abs((y_true - y_pred) / np.where(y_true == 0, 0.01, y_true))) * 100
     ).item()
 
+    if n_features:
+        adj_r2 = adjusted_r2_score(y_true, y_pred, n_features)
+
     return {
         "MAE": round(mae, 2),
         "RMSE": round(rmse, 2),
         "MAPE": round(mape, 2),
+        "Adjusted_R2": round(adj_r2, 2) if n_features else None,
     }
 
 
@@ -149,6 +192,7 @@ def cross_validate_sklearn_model(
     all_rmse: list[float] = []
     all_mae: list[float] = []
     all_mape: list[float] = []
+    all_adj_r2: list[float | None] = []
 
     for i, (train_index, test_index) in enumerate(tscv.split(x_train), start=1):
         if verbose:
@@ -159,12 +203,99 @@ def cross_validate_sklearn_model(
         # Train and evaluate the model
         model.fit(x_tr, y_tr)  # type: ignore
         y_pred = model.predict(x_val)  # type: ignore
-        metrics = compute_metrics(y_val, y_pred)
+        metrics: dict[str, float | None] = compute_metrics(
+            y_val, y_pred, n_features=x_train.shape[1]
+        )
         if verbose:
             print(f"Validation Metrics: {metrics}")
 
         all_rmse.append(metrics.get("RMSE"))  # type: ignore
         all_mae.append(metrics.get("MAE"))  # type: ignore
         all_mape.append(metrics.get("MAPE"))  # type: ignore
+        all_adj_r2.append(metrics.get("Adjusted_R2"))  # type: ignore
 
-    return {"model": model, "RMSE": all_rmse, "MAE": all_mae, "MAPE": all_mape}
+    return {
+        "model": model,
+        "metrics": {
+            "RMSE": all_rmse,
+            "MAE": all_mae,
+            "MAPE": all_mape,
+            "Adjusted_R2": all_adj_r2,
+        },
+    }
+
+
+def get_model_feature_importance(
+    model_name: str, features: list[str], weights: np.ndarray | list[float], n: int = 20
+) -> tuple[pl.DataFrame, dict[str, float]]:
+    """
+    Compute the top feature importances for a trained model.
+
+    Parameters
+    ----------
+    model_name : str
+        Name of the model used for tagging the feature importances.
+    features : list[str]
+        Ordered list of feature names corresponding to `weights`.
+    weights : np.ndarray | list[float]
+        Importance scores aligned with `features`.
+    n : int, default=20
+        Number of top features to retain.
+
+    Returns
+    -------
+    tuple[pl.DataFrame, dict[str, float]]
+        A tuple containing the Polars DataFrame of top features and a dictionary of
+        tags formatted for logging.
+    """
+    feature_importance = (
+        pl.DataFrame({"feature": features, "importance": weights})
+        .sort(by="importance", descending=True)
+        .head(n)
+    )
+    tags: dict[str, Any] = {
+        f"{model_name}_top_feature_{idx}": f"{row[0]} ({row[1]:.4f})"
+        for idx, row in enumerate(feature_importance.iter_rows(), start=1)
+    }
+    return (feature_importance, tags)
+
+
+def get_feature_importance_from_booster(
+    model: xgb.Booster,
+    feature_names: list[str],
+    importance_type: Literal[
+        "weight", "gain", "cover", "total_gain", "total_cover"
+    ] = "weight",
+) -> dict[str, float]:
+    """
+    Extract feature importance from XGBoost Booster object.
+
+    Parameters
+    ----------
+    model : xgb.Booster
+        Trained XGBoost Booster model.
+    feature_names : list[str]
+        List of feature names corresponding to training data columns.
+    importance_type : str, default="weight"
+        Type of importance to extract. Options:
+        - "weight": Number of times a feature appears in trees
+        - "gain": Average gain across all splits using the feature
+        - "cover": Average coverage across all splits using the feature
+        - "total_gain": Total gain across all splits using the feature
+        - "total_cover": Total coverage across all splits using the feature
+
+    Returns
+    -------
+    dict[str, float]
+        Dictionary mapping feature names to importance scores.
+    """
+    # Get feature importance scores from booster
+    importance_dict = model.get_score(importance_type=importance_type)
+
+    # Map feature indices (f0, f1, f2...) to actual feature names
+    feature_importance: dict[str, float] = {
+        feature_name: importance_dict.get(f"f{idx}", 0.0)
+        for idx, feature_name in enumerate(feature_names)
+    }
+
+    return feature_importance
