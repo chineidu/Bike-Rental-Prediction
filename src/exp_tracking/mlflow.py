@@ -27,7 +27,7 @@ class ArtifactsType(str, Enum):
     JSON = "json"
     TXT = "txt"
     YAML = "yaml"
-    PICKLE = "pkl"  # More explicit than "ANY"
+    PICKLE = "pkl"
 
     def __str__(self) -> str:
         return str(self.value)
@@ -344,22 +344,6 @@ class MLFlowTracker:
         - For XGBoost/LightGBM models, use `save_format=ArtifactsType.JSON`
         - Models are saved in `models/{model_name}/` directory
 
-        Examples
-        --------
-        >>> # Log sklearn model
-        >>> tracker.log_model(
-        ...     model=rf_model,
-        ...     model_name="random_forest",
-        ...     input_example=X_test
-        ... )
-
-        >>> # Log XGBoost model in JSON format
-        >>> tracker.log_model(
-        ...     model=xgb_model,
-        ...     model_name="xgboost",
-        ...     save_format=ArtifactsType.JSON,
-        ...     input_example=X_test
-        ... )
         """
         datetime_now: str = datetime.now().isoformat(timespec="seconds")
         n_example_rows: int = 5
@@ -422,7 +406,6 @@ class MLFlowTracker:
                     metadata["input_example"] = {
                         "num_rows": input_example_df.shape[0],
                         "num_cols": input_example_df.shape[1],
-                        "columns": input_example_df.columns,
                         "dtypes": {
                             col: str(dtype)
                             for col, dtype in zip(
@@ -435,6 +418,12 @@ class MLFlowTracker:
                 if hasattr(model, "get_params"):
                     try:
                         metadata["model_params"] = model.get_params()
+                    except Exception as e:
+                        logger.warning(f"Failed to extract model params: {e}")
+
+                if hasattr(model, "save_config"):
+                    try:
+                        metadata["model_params"] = json.loads(model.save_config())
                     except Exception as e:
                         logger.warning(f"Failed to extract model params: {e}")
 

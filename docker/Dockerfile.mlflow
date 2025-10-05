@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+# Install dependencies
+RUN pip install --no-cache \
+    mlflow==3.4.0 \
+    psycopg2-binary==2.9.9 \
+    boto3==1.40.45
+
+# Set default environment variables (can be overridden at runtime)
+ENV MLFLOW_PORT=5001 \
+    MLFLOW_HOST=0.0.0.0 \
+    MLFLOW_ARTIFACT_ROOT=./mlartifacts
+
+
+EXPOSE 5001
+
+# Use bash to allow environment variable expansion
+ENTRYPOINT ["bash", "-c"]
+CMD ["mlflow server --host $MLFLOW_HOST --port $MLFLOW_PORT --backend-store-uri $MLFLOW_DB_URI --default-artifact-root $MLFLOW_ARTIFACT_ROOT --serve-artifacts"]

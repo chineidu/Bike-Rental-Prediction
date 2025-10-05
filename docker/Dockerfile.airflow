@@ -1,0 +1,25 @@
+# Use the official Apache Airflow image as base
+FROM apache/airflow:3.0.6
+
+# Switch to root user to install system dependencies required by some ML libs
+USER root
+
+# Install system dependencies required at runtime by compiled ML packages
+# - libgomp1 provides libgomp.so.1 (OpenMP runtime) used by lightgbm/xgboost
+# Keep the install minimal and remove apt lists to keep image small
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Switch back to airflow user
+USER airflow
+
+# Install Python dependencies
+COPY docker/requirements.txt /requirements.txt
+RUN pip install --no-cache-dir -r /requirements.txt
+
+# Copy the include directory into the image
+COPY --chown=airflow:0 include /opt/airflow/include
+
+# Set PYTHONPATH to include the include directory
+ENV PYTHONPATH="/opt/airflow/include:${PYTHONPATH}"

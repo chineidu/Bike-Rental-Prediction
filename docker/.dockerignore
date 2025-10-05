@@ -1,0 +1,22 @@
+# Directories
+data
+docker
+notebooks
+.mypy_cache
+docker-compose.yml
+.vscode
+.ruff_cache
+
+# Virtual Environments
+.env
+env
+.venv
+venv
+
+# Files
+.git
+**/__pycache__
+*.pyc
+*.pyo
+.ipynb_checkpoints
+.DS_Store

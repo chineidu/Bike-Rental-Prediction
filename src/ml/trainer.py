@@ -1,7 +1,7 @@
-import json
 from datetime import datetime
 from typing import Any
 
+import mlflow
 import numpy as np
 import optuna
 import pandas as pd
@@ -12,9 +12,14 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import TimeSeriesSplit
 
 from src import PACKAGE_PATH, create_logger
-from src.config import app_config
+from src.config import app_config, app_settings
 from src.config.config import FeatureConfig
 from src.exp_tracking.mlflow import ArtifactsType, MLFlowTracker
+from src.exp_tracking.mlflow_s3_utils import MLflowS3Manager
+from src.exp_tracking.s3_verification import (
+    log_s3_verification_results,
+    verify_s3_artifacts,
+)
 from src.ml.feature_engineering import FeatureEngineer
 from src.ml.utils import (
     compute_metrics,
@@ -37,7 +42,7 @@ class ModelTrainer:
 
         self.feat_eng = FeatureEngineer()
         self.mlflow_tracker = MLFlowTracker(
-            tracking_uri=app_config.experiment_config.tracking_uri,
+            tracking_uri=app_settings.mlflow_tracking_uri,
             experiment_name=app_config.experiment_config.experiment_name,
         )
         self.input_example: IntoDataFrameT | None = None
@@ -152,7 +157,7 @@ class ModelTrainer:
     def _hyperparameter_tuning_lightgbm(self) -> None:
         pass
 
-    def train_models(self) -> None:
+    def train_all_models(self) -> None:
         """Train models and log results to MLflow."""
         column_names = self.data_dict["columns"]
         results: list[dict[str, Any]] = []
@@ -160,6 +165,7 @@ class ModelTrainer:
 
         try:
             with self.mlflow_tracker.start_run():
+                current_run_id = mlflow.active_run().info.run_id  # type: ignore
                 # Log data stats
                 self.mlflow_tracker.log_params(
                     {
@@ -188,11 +194,13 @@ class ModelTrainer:
                     object=tags,
                     object_type=ArtifactsType.JSON,
                     filename="feat_imp_random_forest",
+                    artifact_dest="models/",
                 )
-                self.mlflow_tracker.log_mlflow_artifact(
-                    object=rf_model.get_params(),
-                    object_type=ArtifactsType.JSON,
-                    filename="parameters_random_forest",
+                self.mlflow_tracker.log_model(
+                    model=rf_model,
+                    model_name="random_forest_model",
+                    input_example=self.input_example,
+                    save_format=ArtifactsType.PICKLE,
                 )
                 self.mlflow_tracker.log_metrics(rf_reg_results.get("metrics"))  # type: ignore
                 results.append(
@@ -228,11 +236,13 @@ class ModelTrainer:
                     object=tags,
                     object_type=ArtifactsType.JSON,
                     filename="feat_imp_xgboost",
+                    artifact_dest="models/",
                 )
-                self.mlflow_tracker.log_mlflow_artifact(
-                    object=json.loads(xgb_model.save_config()),
-                    object_type=ArtifactsType.JSON,
-                    filename="parameters_xgboost",
+                self.mlflow_tracker.log_model(
+                    model=xgb_model,
+                    model_name="xgboost_model",
+                    input_example=self.input_example,
+                    save_format=ArtifactsType.JSON,
                 )
                 self.mlflow_tracker.log_metrics(xgb_results.get("metrics"))  # type: ignore
 
@@ -257,8 +267,34 @@ class ModelTrainer:
                     delete_tmp=True,
                 )
 
+            self.mlflow_tracker.end_run()
+
+            if current_run_id:
+                try:
+                    logger.info("Syncing artifacts to S3...")
+                    s3_manager = MLflowS3Manager()
+                    s3_manager.sync_mlflow_artifacts_to_s3(current_run_id)
+                    logger.info("✅ Successfully synced artifacts to S3")
+
+                    # Verify S3 artifacts after sync
+                    logger.info("Verifying S3 artifact storage...")
+                    verification_results: dict[str, Any] = verify_s3_artifacts(
+                        run_id=current_run_id,
+                        expected_artifacts=[
+                            "visualizations/",
+                            "models/",
+                        ],
+                    )
+                    log_s3_verification_results(verification_results)
+
+                    if not verification_results["success"]:
+                        logger.warning("S3 artifact verification failed after sync")
+                except Exception as e:
+                    logger.error(f"❌ Failed to sync artifacts to S3: {e}")
+
         except Exception as e:
             logger.error(f"❌ Error during model training: {e}")
+            raise
 
     @staticmethod
     def champion_callback(
