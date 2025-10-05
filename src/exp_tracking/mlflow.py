@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
@@ -451,9 +452,9 @@ class MLFlowTracker:
                 mlflow.log_artifact(str(metadata_path), artifact_path=artifact_path)  # type: ignore
 
                 if input_example_df is not None:
-                    mlflow.log_artifact(
+                    mlflow.log_artifact(  # type: ignore
                         str(input_example_path), artifact_path=artifact_path
-                    )  # type: ignore
+                    )
 
                 logger.info(f"✅ Successfully logged {model_name} model and metadata")
 
@@ -482,22 +483,6 @@ class MLFlowTracker:
         artifact_dest : str, optional
             Subdirectory path within the artifact store.
 
-        Examples
-        --------
-        >>> # Log configuration as YAML
-        >>> tracker.log_mlflow_artifact(
-        ...     object={"batch_size": 32, "epochs": 10},
-        ...     object_type=ArtifactsType.YAML,
-        ...     filename="config",
-        ...     artifact_dest="configs"
-        ... )
-
-        >>> # Log feature names as JSON
-        >>> tracker.log_mlflow_artifact(
-        ...     object={"features": ["age", "income", "score"]},
-        ...     object_type=ArtifactsType.JSON,
-        ...     filename="features"
-        ... )
         """
         # Map artifact type to write function
         write_fn_map: dict[ArtifactsType, WriteFn] = {
@@ -524,6 +509,50 @@ class MLFlowTracker:
 
         except Exception as e:
             logger.error(f"Failed to log artifact {filename}: {e}", exc_info=True)
+            raise
+
+    def log_artifact_from_path(
+        self, local_path: Path, artifact: str | None = None, delete_tmp: bool = True
+    ) -> None:
+        """
+        Log a local file or directory as an MLflow artifact.
+
+        Parameters
+        ----------
+        local_path : Path
+            Path to the local file or directory to log.
+        artifact : str, optional
+            Subdirectory path within the artifact store.
+        delete_tmp : bool, default=True
+            Whether to delete the local file after logging.
+        """
+        if not local_path.exists():
+            raise FileNotFoundError(f"Local path does not exist: {local_path}")
+
+        try:
+            mlflow.log_artifact(str(local_path), artifact_path=artifact)  # type: ignore
+            dest_info = f" to {artifact}" if artifact else ""
+            time.sleep(1)  # Ensure artifact is fully written before deletion
+            logger.debug(f"Logged artifact from path: {local_path} to {dest_info}")
+
+            if delete_tmp:
+                if local_path.is_dir():
+                    # Delete contents of directory but keep the directory itself
+                    for item in local_path.iterdir():
+                        if item.is_dir():
+                            import shutil
+
+                            shutil.rmtree(item)
+                            logger.debug(f"Deleted subdirectory: {item}")
+                        else:
+                            item.unlink(missing_ok=True)
+                            logger.debug(f"Deleted file: {item}")
+                logger.debug(f"Deleted contents of directory: {local_path}")
+
+        except Exception as e:
+            logger.error(
+                f"Failed to log artifact from path {local_path}: {e}", exc_info=True
+            )
             raise
 
     def end_run(self, status: str = "FINISHED") -> None:

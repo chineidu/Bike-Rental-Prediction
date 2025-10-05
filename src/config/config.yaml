@@ -27,7 +27,7 @@ config:
     target_col: "cnt"
 
   experiment_config:
-    experiment_name: bike_rental
+    experiment_name: bike rental
     tracking_uri: "http://0.0.0.0:6060"
     experiment_tags:
       project: ${config.experiment_config.experiment_name}

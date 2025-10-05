@@ -1,28 +1,31 @@
 import json
+from datetime import datetime
 from typing import Any
 
 import numpy as np
 import optuna
 import pandas as pd
+import polars as pl
 import xgboost as xgb
 from narwhals.typing import IntoDataFrameT
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import TimeSeriesSplit
 
-from src import create_logger
+from src import PACKAGE_PATH, create_logger
 from src.config import app_config
 from src.config.config import FeatureConfig
 from src.exp_tracking.mlflow import ArtifactsType, MLFlowTracker
 from src.ml.feature_engineering import FeatureEngineer
 from src.ml.utils import (
     compute_metrics,
+    create_metrics_df,
     cross_validate_sklearn_model,
     get_feature_importance_from_booster,
     get_model_feature_importance,
     split_into_train_test,
     split_temporal_data,
 )
-from src.ml.visualization import ModelVisualizerPlotly
+from src.ml.visualization import create_grouped_metrics_barchart
 
 logger = create_logger(name="trainer")
 
@@ -37,7 +40,6 @@ class ModelTrainer:
             tracking_uri=app_config.experiment_config.tracking_uri,
             experiment_name=app_config.experiment_config.experiment_name,
         )
-        self.visualizer = ModelVisualizerPlotly()
         self.input_example: IntoDataFrameT | None = None
         self.data_dict: dict[str, Any] = self._prepare_data()
 
@@ -151,13 +153,13 @@ class ModelTrainer:
         pass
 
     def train_models(self) -> None:
-        features_ = self.data_dict["columns"]
-        results: dict[str, dict[str, Any]] = {}
+        """Train models and log results to MLflow."""
+        column_names = self.data_dict["columns"]
+        results: list[dict[str, Any]] = []
+        data_dict: dict[str, Any] = self.data_dict
 
         try:
             with self.mlflow_tracker.start_run():
-                data_dict: dict[str, Any] = self.data_dict
-
                 # Log data stats
                 self.mlflow_tracker.log_params(
                     {
@@ -169,6 +171,9 @@ class ModelTrainer:
 
                 # ==== Train Random Forest ====
                 rf_reg_results = self._train_random_forest()
+                y_pred: np.ndarray = rf_reg_results.get("model").predict(  # type: ignore
+                    data_dict["x_test"]
+                )
 
                 # Feature importance
                 rf_model: RandomForestRegressor = rf_reg_results.get("model")
@@ -177,7 +182,7 @@ class ModelTrainer:
 
                 tags: dict[str, Any]
                 (_, tags) = get_model_feature_importance(
-                    model_name=model_name, features=features_, weights=weights_, n=20
+                    model_name=model_name, features=column_names, weights=weights_, n=20
                 )
                 self.mlflow_tracker.log_mlflow_artifact(
                     object=tags,
@@ -189,27 +194,35 @@ class ModelTrainer:
                     object_type=ArtifactsType.JSON,
                     filename="parameters_random_forest",
                 )
-                results["RandomForest"] = {
-                    "model": rf_model,
-                    "metrics": rf_reg_results.get("metrics"),
-                }
+                self.mlflow_tracker.log_metrics(rf_reg_results.get("metrics"))  # type: ignore
+                results.append(
+                    {
+                        "model_name": model_name,
+                        "model": rf_model,
+                        "metrics": rf_reg_results.get("metrics"),
+                        "predictions": y_pred,
+                    }
+                )
                 logger.info("Random Forest training completed successfully.")
 
                 # ==== Train XGBoost ====
                 xgb_results: dict[str, Any] = self._train_xgboost()
+                y_pred = xgb_results.get("model").predict(  # type: ignore
+                    xgb.DMatrix(data_dict["x_test"], enable_categorical=True)
+                )
 
                 # Feature importance
                 xgb_model: xgb.Booster = xgb_results.get("model")
                 model_name = type(xgb_model).__name__
                 weights_dict: dict[str, float] = get_feature_importance_from_booster(
                     xgb_model,
-                    features_,
+                    column_names,
                     importance_type="weight",
                 )
                 weights_ = list(weights_dict.values())
 
                 _, tags = get_model_feature_importance(
-                    model_name=model_name, features=features_, weights=weights_, n=20
+                    model_name=model_name, features=column_names, weights=weights_, n=20
                 )
                 self.mlflow_tracker.log_mlflow_artifact(
                     object=tags,
@@ -221,17 +234,31 @@ class ModelTrainer:
                     object_type=ArtifactsType.JSON,
                     filename="parameters_xgboost",
                 )
+                self.mlflow_tracker.log_metrics(xgb_results.get("metrics"))  # type: ignore
 
-                results["XGBoost"] = {
-                    "model": xgb_model,
-                    "metrics": xgb_results.get("metrics"),
-                }
+                results.append(
+                    {
+                        "model_name": model_name,
+                        "model": xgb_model,
+                        "metrics": xgb_results.get("metrics"),
+                        "predictions": y_pred,
+                    }
+                )
                 logger.info("XGBoost training completed successfully.")
 
-                logger.info("Model training completed successfully.")
+                logger.info("✅ Model training completed successfully.")
+                test_df: pl.DataFrame = pl.DataFrame(
+                    data_dict["x_test"], schema=column_names
+                )
+                self.generate_and_log_visualizations(results=results, test_df=test_df)
+                self.mlflow_tracker.log_artifact_from_path(
+                    local_path=PACKAGE_PATH / "reports",
+                    artifact="visualizations",
+                    delete_tmp=True,
+                )
 
         except Exception as e:
-            logger.error(f"Error during model training: {e}")
+            logger.error(f"❌ Error during model training: {e}")
 
     @staticmethod
     def champion_callback(
@@ -327,11 +354,11 @@ class ModelTrainer:
             )
 
             # Return mean RMSE across all CV folds
-            mean_rmse = np.mean(cv_results.get("RMSE"))
+            mean_rmse = cv_results.get("RMSE", 0.0)
             print(f"Trial {trial.number}: Mean RMSE = {mean_rmse}")
 
             # Store additional metrics for analysis
-            trial.set_user_attr("RMSE", cv_results.get("RMSE"))
+            trial.set_user_attr("RMSE", mean_rmse)
             trial.set_user_attr("MAE", cv_results.get("MAE"))
             trial.set_user_attr("MAPE", cv_results.get("MAPE"))
             trial.set_user_attr("Adjusted_R2", cv_results.get("Adjusted_R2"))
@@ -415,25 +442,19 @@ class ModelTrainer:
             print("Best trial:")
             best_trial = study.best_trial
             best_params: dict[str, Any] = best_trial.params
-            rmse: list[float] = best_trial.user_attrs.get("RMSE", [])
-            mae: list[float] = best_trial.user_attrs.get("MAE", [])
-            mape: list[float] = best_trial.user_attrs.get("MAPE", [])
-            adj_r2: list[float | None] = best_trial.user_attrs.get("Adjusted_R2", [])
+            rmse: float = best_trial.user_attrs.get("RMSE", 0.0)
+            mae: float = best_trial.user_attrs.get("MAE", 0.0)
+            mape: float = best_trial.user_attrs.get("MAPE", 0.0)
+            adj_r2: float | None = best_trial.user_attrs.get("Adjusted_R2", None)
 
             # Log best parameters and metrics to MLflow
             self.mlflow_tracker.log_params(best_params)
             self.mlflow_tracker.log_metrics({"best_rmse": best_trial.value})
-            self.mlflow_tracker.log_metrics({"mean_rmse": np.mean(rmse).round(4)})
-            self.mlflow_tracker.log_metrics({"mean_mae": np.mean(mae).round(4)})
-            self.mlflow_tracker.log_metrics({"mean_mape": np.mean(mape).round(4)})
-            if any(v is not None for v in adj_r2):
-                self.mlflow_tracker.log_metrics(
-                    {
-                        "mean_adjusted_r2": np.mean(
-                            [v for v in adj_r2 if v is not None]
-                        ).round(4)
-                    }
-                )
+            self.mlflow_tracker.log_metrics({"mean_rmse": rmse})
+            self.mlflow_tracker.log_metrics({"mean_mae": mae})
+            self.mlflow_tracker.log_metrics({"mean_mape": mape})
+            if adj_r2 is not None:
+                self.mlflow_tracker.log_metrics({"mean_adjusted_r2": adj_r2})
 
             # Log tags
             tags: dict[str, Any] = (
@@ -496,3 +517,19 @@ class ModelTrainer:
                 input_example=self.input_example,
                 save_format=ArtifactsType.JSON,
             )
+
+    def generate_and_log_visualizations(
+        self, results: list[dict[str, Any]], test_df: pl.DataFrame
+    ) -> None:
+        """Generate and log model comparison visualizations to MLflow"""
+        date_str: str = datetime.now().isoformat(timespec="seconds")
+        try:
+            results_df = create_metrics_df(results)
+            create_grouped_metrics_barchart(
+                results_df, save_path=f"model_metrics_comparison_{date_str}.html"
+            )
+            logger.info("✅ Successfully generated visualizations.")
+
+        except Exception as e:
+            # Don't fail the entire run
+            logger.error(f"❌ Failed to generate visualizations: {e}")

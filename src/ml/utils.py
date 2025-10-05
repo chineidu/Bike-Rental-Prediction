@@ -217,10 +217,10 @@ def cross_validate_sklearn_model(
     return {
         "model": model,
         "metrics": {
-            "RMSE": all_rmse,
-            "MAE": all_mae,
-            "MAPE": all_mape,
-            "Adjusted_R2": all_adj_r2,
+            "RMSE": np.mean(all_rmse).round(2).item(),
+            "MAE": np.mean(all_mae).round(2).item(),
+            "MAPE": np.mean(all_mape).round(2).item(),
+            "Adjusted_R2": np.mean(all_adj_r2).round(2).item(),
         },
     }
 
@@ -299,3 +299,46 @@ def get_feature_importance_from_booster(
     }
 
     return feature_importance
+
+
+def extract_metrics(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Extract and flatten metrics from a mapping into a single dictionary.
+
+    Parameters
+    ----------
+    data : dict[str, Any]
+        Input mapping that may contain a "metrics" key whose value is itself a
+        mapping of metric names to metric values. Other keys are copied through
+        to the result as-is.
+
+    Returns
+    -------
+    dict[str, Any]
+    """
+    results = {}
+    for key, val in data.items():
+        if key == "metrics":
+            for metric_name, metric_value in val.items():
+                results[metric_name] = metric_value  # noqa: PERF403
+        else:
+            results[key] = val
+    return results
+
+
+def create_metrics_df(data_list: list[dict[str, Any]]) -> pl.DataFrame:
+    """
+    Create a DataFrame of metrics extracted from a sequence of input records.
+
+    Parameters
+    ----------
+    data_list : list[dict[str, Any]]
+        A list of input records. Each record should be a mapping containing the raw
+        data expected by `extract_metrics`.
+
+    Returns
+    -------
+    pl.DataFrame
+    """
+    all_metrics: list[dict[str, Any]] = [extract_metrics(data) for data in data_list]
+    return pl.DataFrame(all_metrics)
