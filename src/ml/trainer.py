@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Any
 
-import mlflow
 import numpy as np
 import optuna
 import pandas as pd
@@ -12,15 +11,13 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import TimeSeriesSplit
 
 from src import PACKAGE_PATH, create_logger
-from src.config import app_config, app_settings
-from src.config.config import FeatureConfig
+from src.config import app_config
 from src.exp_tracking.mlflow import ArtifactsType, MLFlowTracker
 from src.exp_tracking.mlflow_s3_utils import MLflowS3Manager
 from src.exp_tracking.s3_verification import (
     log_s3_verification_results,
     verify_s3_artifacts,
 )
-from src.ml.feature_engineering import FeatureEngineer
 from src.ml.utils import (
     compute_metrics,
     create_metrics_df,
@@ -31,18 +28,17 @@ from src.ml.utils import (
     split_temporal_data,
 )
 from src.ml.visualization import create_grouped_metrics_barchart
+from src.utilities.service_discovery import get_mlflow_endpoint
 
 logger = create_logger(name="trainer")
 
 
 class ModelTrainer:
-    def __init__(self, data: IntoDataFrameT, config: FeatureConfig) -> None:
+    def __init__(self, data: IntoDataFrameT) -> None:
         self.data: IntoDataFrameT = data
-        self.config: FeatureConfig = config
 
-        self.feat_eng = FeatureEngineer()
         self.mlflow_tracker = MLFlowTracker(
-            tracking_uri=app_settings.mlflow_tracking_uri,
+            tracking_uri=get_mlflow_endpoint(),
             experiment_name=app_config.experiment_config.experiment_name,
         )
         self.input_example: IntoDataFrameT | None = None
@@ -61,11 +57,21 @@ class ModelTrainer:
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(data_shape={self.data.shape})"
 
+    @property
+    def run_name(self) -> str:
+        """
+        Property to get the run name.
+
+        Returns
+        -------
+        str
+            Run name.
+        """
+        return self.mlflow_tracker._get_run_name(None)
+
     def _prepare_data(self) -> dict[str, Any]:
         """Prepare data by applying feature engineering."""
-        data_df: IntoDataFrameT = self.feat_eng.create_all_features(
-            data=self.data, config=self.config
-        )
+        data_df: IntoDataFrameT = self.data
         train_df, test_df = split_temporal_data(data_df)
         data_dict: dict[str, Any] = split_into_train_test(
             train_df, test_df, target_col="target"
@@ -157,15 +163,19 @@ class ModelTrainer:
     def _hyperparameter_tuning_lightgbm(self) -> None:
         pass
 
-    def train_all_models(self) -> None:
+    def train_all_models(self, tune_models: bool) -> list[dict[str, Any]]:
         """Train models and log results to MLflow."""
         column_names = self.data_dict["columns"]
         results: list[dict[str, Any]] = []
         data_dict: dict[str, Any] = self.data_dict
 
+        if tune_models:
+            logger.info("🔧 Training with hyperparameter tuning enabled")
+            return self._hyperparameter_tuning_all_models()
+
+        logger.info("🚀 Training with default hyperparameters")
         try:
-            with self.mlflow_tracker.start_run():
-                current_run_id = mlflow.active_run().info.run_id  # type: ignore
+            with self.mlflow_tracker.start_run() as run_id:
                 # Log data stats
                 self.mlflow_tracker.log_params(
                     {
@@ -175,7 +185,9 @@ class ModelTrainer:
                     }
                 )
 
-                # ==== Train Random Forest ====
+                # ================================
+                # ====== Train Random Forest =====
+                # ================================
                 rf_reg_results = self._train_random_forest()
                 y_pred: np.ndarray = rf_reg_results.get("model").predict(  # type: ignore
                     data_dict["x_test"]
@@ -205,6 +217,7 @@ class ModelTrainer:
                 self.mlflow_tracker.log_metrics(rf_reg_results.get("metrics"))  # type: ignore
                 results.append(
                     {
+                        "run_id": run_id,
                         "model_name": model_name,
                         "model": rf_model,
                         "metrics": rf_reg_results.get("metrics"),
@@ -213,7 +226,9 @@ class ModelTrainer:
                 )
                 logger.info("Random Forest training completed successfully.")
 
-                # ==== Train XGBoost ====
+                # ================================
+                # ========= Train XGBoost ========
+                # ================================
                 xgb_results: dict[str, Any] = self._train_xgboost()
                 y_pred = xgb_results.get("model").predict(  # type: ignore
                     xgb.DMatrix(data_dict["x_test"], enable_categorical=True)
@@ -248,6 +263,7 @@ class ModelTrainer:
 
                 results.append(
                     {
+                        "run_id": run_id,
                         "model_name": model_name,
                         "model": xgb_model,
                         "metrics": xgb_results.get("metrics"),
@@ -269,17 +285,17 @@ class ModelTrainer:
 
             self.mlflow_tracker.end_run()
 
-            if current_run_id:
+            if run_id:
                 try:
                     logger.info("Syncing artifacts to S3...")
                     s3_manager = MLflowS3Manager()
-                    s3_manager.sync_mlflow_artifacts_to_s3(current_run_id)
+                    s3_manager.sync_mlflow_artifacts_to_s3(run_id)
                     logger.info("✅ Successfully synced artifacts to S3")
 
                     # Verify S3 artifacts after sync
                     logger.info("Verifying S3 artifact storage...")
                     verification_results: dict[str, Any] = verify_s3_artifacts(
-                        run_id=current_run_id,
+                        run_id=run_id,
                         expected_artifacts=[
                             "visualizations/",
                             "models/",
@@ -291,6 +307,8 @@ class ModelTrainer:
                         logger.warning("S3 artifact verification failed after sync")
                 except Exception as e:
                     logger.error(f"❌ Failed to sync artifacts to S3: {e}")
+
+            return results
 
         except Exception as e:
             logger.error(f"❌ Error during model training: {e}")
@@ -388,16 +406,17 @@ class ModelTrainer:
             cv_results: dict[str, Any] = cross_validate_sklearn_model(
                 tscv, x_train, y_train, rf_reg
             )
+            metrics: dict[str, float | None] = cv_results.get("metrics", {})
 
             # Return mean RMSE across all CV folds
-            mean_rmse = cv_results.get("RMSE", 0.0)
+            mean_rmse = metrics.get("RMSE", 0.0)
             print(f"Trial {trial.number}: Mean RMSE = {mean_rmse}")
 
             # Store additional metrics for analysis
             trial.set_user_attr("RMSE", mean_rmse)
-            trial.set_user_attr("MAE", cv_results.get("MAE"))
-            trial.set_user_attr("MAPE", cv_results.get("MAPE"))
-            trial.set_user_attr("Adjusted_R2", cv_results.get("Adjusted_R2"))
+            trial.set_user_attr("MAE", metrics.get("MAE"))
+            trial.set_user_attr("MAPE", metrics.get("MAPE"))
+            trial.set_user_attr("Adjusted_R2", metrics.get("Adjusted_R2"))
 
         return mean_rmse  # type: ignore
 
@@ -461,11 +480,11 @@ class ModelTrainer:
 
         return mean_rmse  # type: ignore
 
-    def _hyperparameter_tuning_random_forest(self) -> None:
+    def _hyperparameter_tuning_random_forest(self) -> dict[str, Any]:
         """
         Perform hyperparameter tuning for a RandomForestRegressor using Optuna and log results to MLflow.
         """
-        with self.mlflow_tracker.start_run(nested=True):
+        with self.mlflow_tracker.start_run(nested=True) as run_id:
             study = optuna.create_study(
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=self.random_seed),
@@ -508,8 +527,14 @@ class ModelTrainer:
                 input_example=self.input_example,
             )
 
-    def _hyperparameter_tuning_xgboost(self) -> None:
-        with self.mlflow_tracker.start_run(nested=True):
+        return {
+            "run_id": run_id,
+            "model_name": "RandomForestRegressor",
+            "best_params": best_params,
+        }
+
+    def _hyperparameter_tuning_xgboost(self) -> dict[str, Any]:
+        with self.mlflow_tracker.start_run(nested=True) as run_id:
             study = optuna.create_study(
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=self.random_seed),
@@ -553,6 +578,35 @@ class ModelTrainer:
                 input_example=self.input_example,
                 save_format=ArtifactsType.JSON,
             )
+        return {
+            "run_id": run_id,
+            "model_name": "XGBoostRegressor",
+            "best_params": best_params,
+        }
+
+    def _hyperparameter_tuning_all_models(self) -> list[dict[str, Any]]:
+        """Perform hyperparameter tuning for all models and log results to MLflow."""
+        results: list[dict[str, Any]] = []
+
+        try:
+            logger.info("🚨 Starting hyperparameter tuning for all models...")
+            # ================================
+            # ========= Random Forest ========
+            # ================================
+            rf_results: dict[str, Any] = self._hyperparameter_tuning_random_forest()
+
+            # ================================
+            # ============ XGBoost ===========
+            # ================================
+            xgb_results: dict[str, Any] = self._hyperparameter_tuning_xgboost()
+            results.extend([rf_results, xgb_results])
+            logger.info("✅ Hyperparameter tuning completed successfully.")
+
+            return results
+
+        except Exception as e:
+            logger.error(f"❌ Error during hyperparameter tuning: {e}")
+            raise
 
     def generate_and_log_visualizations(
         self, results: list[dict[str, Any]], test_df: pl.DataFrame

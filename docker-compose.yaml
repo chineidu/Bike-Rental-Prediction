@@ -68,6 +68,11 @@ x-airflow-common:
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     # Ensure project `include/` package is available to Airflow task runtime
     PYTHONPATH: '/opt/airflow/include:/opt/airflow'
+
+    # MLflow and MinIO hosts for service discovery
+    MLFLOW_HOST: mlflow
+    AWS_S3_HOST: minio
+
   volumes:
   # Updated volume paths to include airflow directory
   - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags

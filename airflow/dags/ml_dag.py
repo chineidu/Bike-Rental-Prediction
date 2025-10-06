@@ -1,3 +1,4 @@
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,16 @@ dag_params: dict[str, Param] = {
         default=str(ARTIFACTS_DIR / "features" / "transformed_features.parquet"),
         description="Path to the features Parquet file",
     ),
+    "tune_models": Param(
+        default=False,
+        description="Whether to perform hyperparameter tuning for models",
+    ),
 }
+
+
+def get_time_now() -> str:
+    """Get the current time formatted as a string."""
+    return pendulum.now().format("YYYY-MM-DDTHH:mm:ss")
 
 
 @dag(  # type: ignore
@@ -80,6 +90,7 @@ def ml_pipeline_dag() -> None:
         return {
             "data_sample": data.to_dicts()[:10],
             "data_path": data_path,
+            "datetime": get_time_now(),
         }
 
     @task(multiple_outputs=True, retries=2)
@@ -108,6 +119,7 @@ def ml_pipeline_dag() -> None:
                 "artifacts_path": str(artifacts_dir),
                 "models_path": str(models_dir),
                 "reports_path": str(reports_dir),
+                "datetime": get_time_now(),
             }
         except Exception as e:
             print(f"❌ Failed to initialize artifacts directory: {e}")
@@ -127,6 +139,7 @@ def ml_pipeline_dag() -> None:
             return {
                 "validation_result": validation_result,
                 "data_path": result.get("data_path"),
+                "datetime": get_time_now(),
             }
         except Exception as e:
             print(f"❌ Data validation failed: {e}")
@@ -150,17 +163,108 @@ def ml_pipeline_dag() -> None:
                 data=data, config=app_config.feature_config
             )  # type: ignore
 
-            print("Saving generated features ...")
+            print("🚨 Saving generated features ...")
             features_df.write_parquet(file=save_path)
 
             return {
                 "num_rows": features_df.height,
                 "num_columns": features_df.width,
                 "features_path": save_path,
+                "datetime": get_time_now(),
             }
         except Exception as e:
             print(f"❌ Feature generation failed: {e}")
             raise
+
+    @task(multiple_outputs=True, retries=2)
+    def model_training_task(
+        result: dict[str, Any], params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        import polars as pl
+
+        from src.ml.trainer import ModelTrainer
+
+        tune_models: bool = params["tune_models"] if params else False
+        serializable_results: list[dict[str, Any]] = []
+
+        data_path: str = result["features_path"]
+        features_df: pl.DataFrame = pl.read_parquet(data_path)
+        trainer = ModelTrainer(features_df)
+        run_id: str = ""
+
+        if not tune_models:
+            print("🚨 Training models without hyperparameter tuning ...")
+            try:
+                training_results: list[dict[str, Any]] = trainer.train_all_models(
+                    tune_models=tune_models
+                )
+
+                for row in training_results:
+                    serializable_results.append(  # noqa: PERF401
+                        {
+                            "run_id": row.get("run_id", run_id),
+                            "model_name": row.get("model_name", ""),
+                            "metrics": row.get("metrics", {}),
+                        }
+                    )
+
+                return {
+                    "training_results": serializable_results,
+                    "datetime": get_time_now(),
+                }
+
+            except Exception:
+                print(traceback.format_exc())
+                raise
+
+        return {
+            "training_results": [],
+            "datetime": get_time_now(),
+        }
+
+    @task(multiple_outputs=True, retries=2)
+    def hyperparameter_tuning_task(
+        result: dict[str, Any], params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        import polars as pl
+
+        from src.ml.trainer import ModelTrainer
+
+        data_path: str = result["features_path"]
+        tune_models: bool = params["tune_models"] if params else False
+        features_df: pl.DataFrame = pl.read_parquet(data_path)
+        trainer = ModelTrainer(features_df)
+
+        if tune_models:
+            print("🚨 Performing hyperparameter tuning ...")
+            try:
+                hyperparams_results: list[dict[str, Any]] = trainer.train_all_models(
+                    tune_models=tune_models
+                )
+
+                return {
+                    "hyperparameter_tuning_results": hyperparams_results,
+                    "datetime": get_time_now(),
+                }
+
+            except Exception:
+                print(traceback.format_exc())
+                raise
+
+        return {
+            "hyperparameter_tuning_results": [],
+            "datetime": get_time_now(),
+        }
+
+    @task.branch
+    def decide_tuning_branch(params: dict[str, Any] | None = None) -> str:
+        tune_models: bool = params["tune_models"] if params else False
+        if tune_models:
+            print("✅ Hyperparameter tuning enabled - branching to tuning task")
+            return "hyperparameter_tuning_task"
+
+        print("🚨 Hyperparameter tuning disabled - skipping tuning task")
+        return "model_training_task"
 
     _ = BashOperator(
         task_id="bash_task",
@@ -172,11 +276,19 @@ def ml_pipeline_dag() -> None:
     )
 
     result_load = load_data_task()
-    result_init = init_artifacts_store()
+    result_init_artifacts = init_artifacts_store()
     result_validate = validate_data_task(result_load)
     result_features = features_generation_task(result_load)
+    result_train = model_training_task(result_features)
+    result_tune = hyperparameter_tuning_task(result_features)
 
-    result_init >> [result_load, result_validate, result_features]
+    # Branching logic
+    tuning_decision = decide_tuning_branch()
+
+    # Set task dependencies
+    result_init_artifacts >> [result_load, result_validate]
+    result_validate >> result_features >> tuning_decision
+    tuning_decision >> [result_tune, result_train]
 
 
 bike_rental_ml_dag = ml_pipeline_dag()
