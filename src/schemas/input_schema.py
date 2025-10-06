@@ -1,5 +1,8 @@
+from typing import Annotated
+
 from pydantic import (  # type: ignore
     BaseModel,
+    BeforeValidator,
     ConfigDict,
 )
 from pydantic.alias_generators import to_camel
@@ -14,6 +17,9 @@ def round_probability(value: float) -> float:
     if isinstance(value, float):
         return round(value, 2)
     return value
+
+
+Float = Annotated[float, BeforeValidator(round_probability)]
 
 
 class BaseSchema(BaseModel):

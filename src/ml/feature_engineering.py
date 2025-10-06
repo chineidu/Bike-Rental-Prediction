@@ -18,18 +18,6 @@ class FeatureEngineer:
     difference, and binary features), drops configured columns, and returns the result
     in the native input format.
 
-    Attributes
-    ----------
-    data : nw.DataFrame
-        Internal neutral dataframe representation used for feature operations.
-    config : FeatureConfig
-        Stored configuration used by the pipeline.
-
-    Methods
-    -------
-        _create_all_features
-        __repr__
-        create_all_features
     """
 
     def __init__(self) -> None:

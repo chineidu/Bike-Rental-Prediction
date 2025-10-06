@@ -6,6 +6,8 @@ import narwhals.selectors as n_cs
 import pendulum
 from narwhals.typing import IntoFrameT
 
+from src.schemas import DataValidatorSchema
+
 EMPTY_DATAFRAME: str = "🚫 Empty dataframe"
 
 type InfoFn = Callable[[nw.DataFrame], dict[str, Any]]
@@ -331,7 +333,7 @@ def get_cardinality_info(data: nw.DataFrame) -> dict[str, Any]:
         - "num_unique_numeric_rows": dict
             A mapping from numeric column names to the number of unique values
             present in each numeric column.
-        - "num_unique_string_rows": dict
+        - "num_unique_categorical_rows": dict
             A mapping from string column names to the number of unique values
             present in each string column.
 
@@ -351,14 +353,14 @@ def get_cardinality_info(data: nw.DataFrame) -> dict[str, Any]:
     >>> get_cardinality_info(df)
     {
         "num_unique_numeric_rows": {"age": 42},
-        "num_unique_string_rows": {"city": 12}
+        "num_unique_categorical_rows": {"city": 12}
     """
     cardinality: dict[str, int] = {
         "num_unique_numeric_rows": {
             col: data[col].n_unique()
             for col in data.select(n_cs.numeric()).columns  # type: ignore
         },
-        "num_unique_string_rows": {
+        "num_unique_categorical_rows": {
             col: data[col].n_unique()
             for col in data.select(n_cs.string()).columns  # type: ignore
         },
@@ -471,7 +473,7 @@ def get_memory_usage_info(data: nw.DataFrame) -> dict[str, Any]:
     }
 
 
-def _data_validator(input_data: DataValidatorConfig) -> dict[str, Any]:
+def _data_validator(input_data: DataValidatorConfig) -> DataValidatorSchema:
     """
     Validate and summarize a dataset according to the provided DataValidatorConfig.
 
@@ -495,22 +497,10 @@ def _data_validator(input_data: DataValidatorConfig) -> dict[str, Any]:
 
     Returns
     -------
-    dict[str, Any]
-        A dictionary with the following top-level keys:
-        - data_schema: Either a list of schema dicts (if a different number of
-          schema_fns were provided) or a dict with keys "numeric" and "string"
-          when two schema functions are provided.
-        - data_shape: Dict with basic shape metrics:
-            - total_rows: int
-            - total_columns: int
-            - number_of_numeric_columns: int
-            - number_of_string_columns: int
-        - summary_statistics: Dict with keys:
-            - numeric: dict (or empty list) - numeric summary statistics when a
-              numeric summary function is provided
-            - categorical: dict (or empty list) - categorical summary statistics
-              when a categorical summary function is provided
-        - other_info: dict - merged information produced by the info_fns callables.
+    DataValidatorSchema
+        A structured schema object (Pydantic model) containing the validation results.
+        The top-level keys in the returned object typically include:
+        - data_schema: dict - schema information for numeric and string columns
 
     Raises
     ------
@@ -543,7 +533,7 @@ def _data_validator(input_data: DataValidatorConfig) -> dict[str, Any]:
         for stats_fn in input_data.summary_fns
     ]
 
-    return {
+    result: dict[str, Any] = {
         "data_schema": (
             {"numeric": schema[0], "string": schema[1]} if len(schema) == 2 else schema
         ),
@@ -553,7 +543,7 @@ def _data_validator(input_data: DataValidatorConfig) -> dict[str, Any]:
             "number_of_numeric_columns": len(
                 list(nw_data.select(n_cs.numeric()).columns)
             ),
-            "number_of_string_columns": len(
+            "number_of_categorical_columns": len(
                 list(nw_data.select(n_cs.string()).columns)
             ),
         },
@@ -563,9 +553,10 @@ def _data_validator(input_data: DataValidatorConfig) -> dict[str, Any]:
         },
         "other_info": info,
     }
+    return DataValidatorSchema(**result)  # type: ignore
 
 
-def data_validator(data: IntoFrameT) -> dict[str, Any]:
+def data_validator(data: IntoFrameT) -> DataValidatorSchema:
     """
     Validate and summarize tabular data using predefined schema, info, and summary functions.
 
@@ -577,12 +568,12 @@ def data_validator(data: IntoFrameT) -> dict[str, Any]:
 
     Returns
     -------
-    dict[str, Any]
-        A dictionary containing validation results. Typical top-level keys include:
-        - "schema": inferred schema information for numeric and string columns
-        - "info": dataset-level information such as cardinality, null counts,
-          duplicated rows, and memory usage
-        - "summary": summary statistics for numeric and categorical features
+    DataValidatorSchema
+        A Pydantic model instance containing the validation results, including:
+        - data_schema: dict with numeric and categorical schema information
+        - data_shape: dict with total rows/columns and counts of numeric/categorical columns
+        - summary_statistics: dict with lists of numeric and categorical summary stats
+        - other_info: dict with additional metadata (e.g., null counts, memory usage)
 
     Raises
     ------

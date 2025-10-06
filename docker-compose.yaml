@@ -75,11 +75,15 @@ x-airflow-common:
   - ${AIRFLOW_PROJ_DIR:-.}/airflow/config:/opt/airflow/config
   - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
 
-  # Mount project include so DAG tasks can import include.* modules
-  - ${AIRFLOW_PROJ_DIR:-.}/include:/opt/airflow/include:ro
+  # Mount package so DAG tasks can import package.* modules
+  # The importable modules are located in src/
+  - ${AIRFLOW_PROJ_DIR:-.}/src:/opt/airflow/src:ro
 
   # Mount data directory for training data
-  - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
+  - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/data
+  # Mount artifacts directory for model artifacts
+  - ${AIRFLOW_PROJ_DIR:-.}/artifacts:/opt/airflow/artifacts
+
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -454,7 +458,7 @@ services:
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
     volumes:
       - ./ui:/app
-      - ./include:/usr/local/airflow/include:ro
+      - ./src:/usr/local/airflow/src:ro
     depends_on:
       - mlflow
       - minio

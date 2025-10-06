@@ -18,8 +18,9 @@ USER airflow
 COPY docker/requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt
 
+# Configure the Package directory
 # Copy the include directory into the image
-COPY --chown=airflow:0 include /opt/airflow/include
+COPY --chown=airflow:0 src /opt/airflow/src
 
-# Set PYTHONPATH to include the include directory
-ENV PYTHONPATH="/opt/airflow/include:${PYTHONPATH}"
+# Set PYTHONPATH to include the package directory
+ENV PYTHONPATH="/opt/airflow/src:${PYTHONPATH}"
