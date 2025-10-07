@@ -66,11 +66,13 @@ class ExperimentTags(BaseSchema):
         ..., description="Metric of interest"
     )
     hardware: Literal["cpu", "gpu"] = Field(..., description="Hardware used")
+    others: dict[str, str] | None = Field(
+        None, description="Additional tags as key-value pairs"
+    )
 
 
 class ExperimentConfig(BaseSchema):
     experiment_name: str = Field(..., description="Name of the experiment")
-    tracking_uri: str = Field(..., description="Tracking URI for experiment tracking")
     experiment_tags: ExperimentTags = Field(..., description="Tags for the experiment")
 
 
@@ -84,9 +86,6 @@ class GeneralConfig(BaseSchema):
     )
     n_splits: int = Field(
         ..., description="Number of splits for time series cross-validation"
-    )
-    n_trials: int = Field(
-        ..., description="Number of Optuna trials for hyperparameter optimization"
     )
 
 
@@ -118,6 +117,9 @@ class RandomForestOptunaConfig(BaseSchema):
         ..., description="Options for max features"
     )
     bootstrap: list[bool] = Field(..., description="Options for bootstrap sampling")
+    n_trials: int = Field(
+        ..., description="Number of Optuna trials for hyperparameter optimization"
+    )
 
 
 class XGBoostConfig(BaseSchema):
@@ -150,6 +152,9 @@ class XGBoostOptunaConfig(BaseSchema):
     grow_policy: tuple[
         Literal["depthwise", "lossguide"], Literal["depthwise", "lossguide"]
     ] = Field(..., description="Options for grow policy")
+    n_trials: int = Field(
+        ..., description="Number of Optuna trials for hyperparameter optimization"
+    )
 
 
 class ModelTrainingConfig(BaseSchema):

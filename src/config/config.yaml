@@ -28,7 +28,6 @@ config:
 
   experiment_config:
     experiment_name: bike rental
-    tracking_uri: "http://0.0.0.0:6060"
     experiment_tags:
       project: ${config.experiment_config.experiment_name}
       team: data_science
@@ -37,19 +36,26 @@ config:
       feature_set_version: 1
       metric_of_interest: RMSE
       hardware: cpu
+      # Add any other relevant tags here
+      others:
+        {
+          "note": "Initial experiment setup",
+          "purpose": "Hyperparameter tuning",
+        }
 
   model_training_config:
     general_config:
       random_seed: 42
-      test_size: 0.2
+      test_size: 0.1
       cv_test_size: 168 # 1 week of hourly data
       n_splits: 5
-      n_trials: 1
+    # Default hyperparameters for Random Forest and XGBoost
     random_forest_config:
       n_estimators: 100
       max_depth: 10
       min_samples_split: 2
       min_samples_leaf: 1
+    # Default hyperparameters for XGBoost
     xgboost_config:
       objective: "reg:squarederror"
       n_estimators: 100
@@ -58,6 +64,7 @@ config:
       num_boost_round: 200
 
   optuna_config:
+    # Hyperparameter search space for Random Forest
     random_forest_optuna_config:
       n_estimators: [50, 300]
       max_depth: [3, 20]
@@ -65,6 +72,8 @@ config:
       min_samples_leaf: [1, 5]
       max_features: [null, "sqrt", "log2"]
       bootstrap: [true, false]
+      n_trials: 1
+    # Hyperparameter search space for XGBoost
     xgboost_optuna_config:
       objective: "reg:squarederror"
       eval_metric: "rmse"
@@ -75,6 +84,7 @@ config:
       eta: [1e-8, 1.0]
       gamma: [1e-8, 1.0]
       grow_policy: ["depthwise", "lossguide"]
+      n_trials: 5
 
   api_config:
     title: Bike Rental Prediction API

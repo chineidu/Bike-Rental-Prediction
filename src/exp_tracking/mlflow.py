@@ -113,17 +113,6 @@ class MLFlowTracker:
         MLflow tracking server URI (e.g., "http://localhost:5000").
     experiment_name : str
         Name of the MLflow experiment to use or create.
-
-    Examples
-    --------
-    >>> tracker = MLFlowTracker(
-    ...     tracking_uri="http://localhost:5000",
-    ...     experiment_name="bike_rental_prediction"
-    ... )
-    >>> with tracker.start_run(run_name="baseline_model") as run_id:
-    ...     tracker.log_params({"learning_rate": 0.1})
-    ...     tracker.log_metrics({"rmse": 2.5, "mae": 1.8})
-    ...     tracker.log_model(model, "xgboost")
     """
 
     def __init__(self, tracking_uri: str, experiment_name: str) -> None:
@@ -135,6 +124,7 @@ class MLFlowTracker:
                 f"Cannot connect to MLflow tracking server at {tracking_uri}"
             )
         mlflow.set_tracking_uri(tracking_uri)
+        logger.info(f"Set MLflow tracking URI to: {tracking_uri}")
         self._set_experiment()
         logger.info(
             f"Initialized {self.__class__.__name__} with experiment: {experiment_name}"
@@ -159,11 +149,22 @@ class MLFlowTracker:
     def _set_experiment(self) -> None:
         """Set the MLflow experiment. If it doesn't exist, create it."""
         try:
-            mlflow.set_experiment(self.experiment_name)
-            logger.debug(f"Set experiment to: {self.experiment_name}")
+            experiment = mlflow.get_experiment_by_name(self.experiment_name)  # type: ignore
+
+            if experiment is None:
+                experiment_id: str = mlflow.create_experiment(self.experiment_name)  # type: ignore
+                logger.info(
+                    f"Created new experiment: {self.experiment_name} (ID: {experiment_id})"
+                )
+
+            experiment = mlflow.set_experiment(self.experiment_name)
+            logger.info(
+                f"Set experiment to: {self.experiment_name} (ID: {experiment.experiment_id})"
+            )
+
         except Exception as e:
             logger.warning(f"Failed to set experiment {self.experiment_name}: {e}")
-            raise
+            logger.warning("Falling back to default experiment")
 
     def _get_run_name(self, run_name: str | None = None) -> str:
         """
@@ -207,11 +208,6 @@ class MLFlowTracker:
         str
             ID of the started run.
 
-        Examples
-        --------
-        >>> with tracker.start_run(run_name="experiment_1") as run_id:
-        ...     tracker.log_params({"n_estimators": 100})
-        ...     print(f"Run ID: {run_id}")
         """
         run_name = self._get_run_name(run_name)
         run = mlflow.start_run(run_name=run_name, tags=tags, nested=nested)  # type: ignore
@@ -246,13 +242,6 @@ class MLFlowTracker:
         MLflow has a limit of 500 parameters per run. Parameter values
         are truncated at 500 characters.
 
-        Examples
-        --------
-        >>> tracker.log_params({
-        ...     "learning_rate": 0.1,
-        ...     "max_depth": 6,
-        ...     "n_estimators": 100
-        ... })
         """
         try:
             mlflow.log_params(params)  # type: ignore
@@ -261,22 +250,18 @@ class MLFlowTracker:
             logger.error(f"Failed to log parameters: {e}")
             raise
 
-    def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
+    def log_metrics(
+        self, metrics: dict[str, float | None], step: int | None = None
+    ) -> None:
         """
         Log metrics to MLflow.
 
         Parameters
         ----------
-        metrics : dict[str, float]
+        metrics : dict[str, float | None]
             Metrics to log. Keys are metric names, values are numeric.
         step : int, optional
             Step at which the metrics are logged (useful for iterative training).
-
-        Examples
-        --------
-        >>> tracker.log_metrics({"rmse": 2.5, "mae": 1.8, "r2": 0.85})
-        >>> # Log metrics at a specific training step
-        >>> tracker.log_metrics({"train_loss": 0.5}, step=100)
         """
         try:
             mlflow.log_metrics(metrics, step=step)  # type: ignore
@@ -557,13 +542,6 @@ class MLFlowTracker:
         -----
         - Automatically called by the context manager on normal exit
         - If status is "FINISHED", attempts to sync artifacts to S3 (if configured)
-
-        Examples
-        --------
-        >>> # Manual run management (not recommended)
-        >>> mlflow.start_run()
-        >>> tracker.log_metrics({"accuracy": 0.95})
-        >>> tracker.end_run(status="FINISHED")
         """
         run = mlflow.active_run()
         run_id = run.info.run_id if run else None

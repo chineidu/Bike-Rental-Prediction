@@ -52,7 +52,6 @@ class ModelTrainer:
         self.random_seed: int = (
             app_config.model_training_config.general_config.random_seed
         )
-        self.n_trials: int = app_config.model_training_config.general_config.n_trials
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(data_shape={self.data.shape})"
@@ -163,15 +162,11 @@ class ModelTrainer:
     def _hyperparameter_tuning_lightgbm(self) -> None:
         pass
 
-    def train_all_models(self, tune_models: bool) -> list[dict[str, Any]]:
+    def train_all_models(self) -> list[dict[str, Any]]:
         """Train models and log results to MLflow."""
         column_names = self.data_dict["columns"]
         results: list[dict[str, Any]] = []
         data_dict: dict[str, Any] = self.data_dict
-
-        if tune_models:
-            logger.info("🔧 Training with hyperparameter tuning enabled")
-            return self._hyperparameter_tuning_all_models()
 
         logger.info("🚀 Training with default hyperparameters")
         try:
@@ -210,7 +205,7 @@ class ModelTrainer:
                 )
                 self.mlflow_tracker.log_model(
                     model=rf_model,
-                    model_name="random_forest_model",
+                    model_name="RandomForestRegressor",
                     input_example=self.input_example,
                     save_format=ArtifactsType.PICKLE,
                 )
@@ -255,7 +250,7 @@ class ModelTrainer:
                 )
                 self.mlflow_tracker.log_model(
                     model=xgb_model,
-                    model_name="xgboost_model",
+                    model_name="XGBoostRegressor",
                     input_example=self.input_example,
                     save_format=ArtifactsType.JSON,
                 )
@@ -418,6 +413,10 @@ class ModelTrainer:
             trial.set_user_attr("MAPE", metrics.get("MAPE"))
             trial.set_user_attr("Adjusted_R2", metrics.get("Adjusted_R2"))
 
+            # Log to MLflow
+            self.mlflow_tracker.log_params(params)
+            self.mlflow_tracker.log_metrics(metrics)  # type: ignore
+
         return mean_rmse  # type: ignore
 
     def _objective_xgboost(self, trial: optuna.Trial) -> float:
@@ -478,12 +477,18 @@ class ModelTrainer:
             trial.set_user_attr("MAPE", mean_mape)
             trial.set_user_attr("Adjusted_R2", mean_adj_r2)
 
+            # Log to MLflow
+            self.mlflow_tracker.log_params(params)
+            self.mlflow_tracker.log_metrics(metrics)  # type: ignore
+
         return mean_rmse  # type: ignore
 
     def _hyperparameter_tuning_random_forest(self) -> dict[str, Any]:
         """
         Perform hyperparameter tuning for a RandomForestRegressor using Optuna and log results to MLflow.
         """
+        optuna_config = app_config.optuna_config.random_forest_optuna_config
+        n_trials: int = optuna_config.n_trials
         with self.mlflow_tracker.start_run(nested=True) as run_id:
             study = optuna.create_study(
                 direction="minimize",
@@ -491,7 +496,7 @@ class ModelTrainer:
             )
             study.optimize(
                 self._objective_random_forest,
-                n_trials=self.n_trials,
+                n_trials=n_trials,
                 callbacks=[self.champion_callback],
             )
             print("Best trial:")
@@ -504,13 +509,15 @@ class ModelTrainer:
 
             # Log best parameters and metrics to MLflow
             self.mlflow_tracker.log_params(best_params)
-            self.mlflow_tracker.log_metrics({"best_rmse": best_trial.value})
-            self.mlflow_tracker.log_metrics({"mean_rmse": rmse})
-            self.mlflow_tracker.log_metrics({"mean_mae": mae})
-            self.mlflow_tracker.log_metrics({"mean_mape": mape})
-            if adj_r2 is not None:
-                self.mlflow_tracker.log_metrics({"mean_adjusted_r2": adj_r2})
-
+            self.mlflow_tracker.log_metrics(
+                {
+                    "best_rmse": best_trial.value,
+                    "mean_rmse": rmse,
+                    "mean_mae": mae,
+                    "mean_mape": mape,
+                    "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
+                }
+            )
             # Log tags
             tags: dict[str, Any] = (
                 app_config.experiment_config.experiment_tags.model_dump()
@@ -518,11 +525,39 @@ class ModelTrainer:
             tags["model_family"] = "RandomForest"
             self.mlflow_tracker.set_tags(tags=tags)
 
-            rf_reg = RandomForestRegressor(
-                **best_params,
+            # Build model
+            tscv = TimeSeriesSplit(
+                n_splits=self.n_splits,
+                test_size=self.cv_test_size,
+                gap=0,
+            )
+            rf_model = RandomForestRegressor(
+                **best_params, random_state=self.random_seed
+            )
+            data_dict: dict[str, Any] = self.data_dict
+            x_train, y_train = data_dict["x_train"], data_dict["y_train"]
+            cv_results: dict[str, Any] = cross_validate_sklearn_model(
+                tscv, x_train, y_train, rf_model
+            )
+            trained_model: RandomForestRegressor = cv_results.get("model")  # type: ignore
+
+            # Feature importance
+            column_names = data_dict["columns"]
+            weights_ = trained_model.feature_importances_
+            model_name: str = type(trained_model).__name__
+
+            feat_importance: dict[str, Any]
+            (_, feat_importance) = get_model_feature_importance(
+                model_name=model_name, features=column_names, weights=weights_, n=20
+            )
+            self.mlflow_tracker.log_mlflow_artifact(
+                object=feat_importance,
+                object_type=ArtifactsType.JSON,
+                filename="feat_imp_random_forest",
+                artifact_dest="models/",
             )
             self.mlflow_tracker.log_model(
-                rf_reg,
+                trained_model,
                 model_name="RandomForestRegressor",
                 input_example=self.input_example,
             )
@@ -534,6 +569,8 @@ class ModelTrainer:
         }
 
     def _hyperparameter_tuning_xgboost(self) -> dict[str, Any]:
+        optuna_config = app_config.optuna_config.xgboost_optuna_config
+        n_trials: int = optuna_config.n_trials
         with self.mlflow_tracker.start_run(nested=True) as run_id:
             study = optuna.create_study(
                 direction="minimize",
@@ -541,25 +578,28 @@ class ModelTrainer:
             )
             study.optimize(
                 self._objective_xgboost,
-                n_trials=self.n_trials,
+                n_trials=n_trials,
                 callbacks=[self.champion_callback],
             )
             print("Best trial:")
             best_trial = study.best_trial
             best_params: dict[str, Any] = best_trial.params
-            rmse: list[float] | float = best_trial.user_attrs.get("RMSE", [])
-            mae: list[float] | float = best_trial.user_attrs.get("MAE", [])
-            mape: list[float] | float = best_trial.user_attrs.get("MAPE", [])
-            adj_r2: list[float | None] = best_trial.user_attrs.get("Adjusted_R2", [])
+            rmse: float = best_trial.user_attrs.get("RMSE", 0.0)
+            mae: float = best_trial.user_attrs.get("MAE", 0.0)
+            mape: float = best_trial.user_attrs.get("MAPE", 0.0)
+            adj_r2: float | None = best_trial.user_attrs.get("Adjusted_R2", None)
 
             # Log best parameters and metrics to MLflow
             self.mlflow_tracker.log_params(best_params)
-            self.mlflow_tracker.log_metrics({"best_rmse": best_trial.value})
-            self.mlflow_tracker.log_metrics({"mean_rmse": rmse})  # type: ignore
-            self.mlflow_tracker.log_metrics({"mean_mae": mae})  # type: ignore
-            self.mlflow_tracker.log_metrics({"mean_mape": mape})  # type: ignore
-            self.mlflow_tracker.log_metrics({"mean_adjusted_r2": adj_r2})  # type: ignore
-
+            self.mlflow_tracker.log_metrics(
+                {
+                    "best_rmse": best_trial.value,
+                    "mean_rmse": rmse,
+                    "mean_mae": mae,
+                    "mean_mape": mape,
+                    "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
+                }
+            )
             # Log tags
             tags: dict[str, Any] = (
                 app_config.experiment_config.experiment_tags.model_dump()
@@ -571,20 +611,40 @@ class ModelTrainer:
             data_dict: dict[str, Any] = self.data_dict
             x_train, y_train = data_dict["x_train"], data_dict["y_train"]
             dtrain = xgb.DMatrix(x_train, y_train, enable_categorical=True)
-            model = xgb.train(best_params, dtrain)
+            xgb_model = xgb.train(best_params, dtrain)
+
+            # Feature importance
+            column_names = self.data_dict["columns"]
+            model_name = type(xgb_model).__name__
+            weights_dict: dict[str, float] = get_feature_importance_from_booster(
+                xgb_model,
+                column_names,
+                importance_type="weight",
+            )
+            weights_ = list(weights_dict.values())
+            (_, feat_importance) = get_model_feature_importance(
+                model_name=model_name, features=column_names, weights=weights_, n=20
+            )
+            self.mlflow_tracker.log_mlflow_artifact(
+                object=feat_importance,
+                object_type=ArtifactsType.JSON,
+                filename="feat_imp_xgboost",
+                artifact_dest="models/",
+            )
             self.mlflow_tracker.log_model(
-                model,
+                xgb_model,
                 model_name="XGBoostRegressor",
                 input_example=self.input_example,
                 save_format=ArtifactsType.JSON,
             )
+
         return {
             "run_id": run_id,
             "model_name": "XGBoostRegressor",
             "best_params": best_params,
         }
 
-    def _hyperparameter_tuning_all_models(self) -> list[dict[str, Any]]:
+    def hyperparameter_tuning_all_models(self) -> list[dict[str, Any]]:
         """Perform hyperparameter tuning for all models and log results to MLflow."""
         results: list[dict[str, Any]] = []
 

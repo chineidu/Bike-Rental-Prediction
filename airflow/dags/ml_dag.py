@@ -195,9 +195,7 @@ def ml_pipeline_dag() -> None:
         if not tune_models:
             print("🚨 Training models without hyperparameter tuning ...")
             try:
-                training_results: list[dict[str, Any]] = trainer.train_all_models(
-                    tune_models=tune_models
-                )
+                training_results: list[dict[str, Any]] = trainer.train_all_models()
 
                 for row in training_results:
                     serializable_results.append(  # noqa: PERF401
@@ -238,8 +236,8 @@ def ml_pipeline_dag() -> None:
         if tune_models:
             print("🚨 Performing hyperparameter tuning ...")
             try:
-                hyperparams_results: list[dict[str, Any]] = trainer.train_all_models(
-                    tune_models=tune_models
+                hyperparams_results: list[dict[str, Any]] = (
+                    trainer.hyperparameter_tuning_all_models()
                 )
 
                 return {
