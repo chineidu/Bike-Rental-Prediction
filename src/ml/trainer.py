@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any
 
+import lightgbm as lgb
 import numpy as np
 import optuna
 import pandas as pd
@@ -12,6 +13,7 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from src import PACKAGE_PATH, create_logger
 from src.config import app_config
+from src.exceptions import HyperparameterTuningError, TrainingError
 from src.exp_tracking.mlflow import ArtifactsType, MLFlowTracker
 from src.exp_tracking.mlflow_s3_utils import MLflowS3Manager
 from src.exp_tracking.s3_verification import (
@@ -19,15 +21,17 @@ from src.exp_tracking.s3_verification import (
     verify_s3_artifacts,
 )
 from src.ml.utils import (
+    combine_train_val,
     compute_metrics,
     create_metrics_df,
     cross_validate_sklearn_model,
     get_feature_importance_from_booster,
+    get_lightgbm_feature_importance,
     get_model_feature_importance,
-    split_into_train_test,
-    split_temporal_data,
+    split_into_train_val_test_sets,
 )
 from src.ml.visualization import create_grouped_metrics_barchart
+from src.schemas.types import ModelType
 from src.utilities.service_discovery import get_mlflow_endpoint
 
 logger = create_logger(name="trainer")
@@ -36,12 +40,15 @@ logger = create_logger(name="trainer")
 class ModelTrainer:
     def __init__(self, data: IntoDataFrameT) -> None:
         self.data: IntoDataFrameT = data
+        self.input_example: IntoDataFrameT = data
 
         self.mlflow_tracker = MLFlowTracker(
             tracking_uri=get_mlflow_endpoint(),
             experiment_name=app_config.experiment_config.experiment_name,
         )
-        self.input_example: IntoDataFrameT | None = None
+        self.test_size: float | int = (
+            app_config.model_training_config.general_config.test_size
+        )
         self.data_dict: dict[str, Any] = self._prepare_data()
 
         # Configs
@@ -71,16 +78,14 @@ class ModelTrainer:
     def _prepare_data(self) -> dict[str, Any]:
         """Prepare data by applying feature engineering."""
         data_df: IntoDataFrameT = self.data
-        train_df, test_df = split_temporal_data(data_df)
-        data_dict: dict[str, Any] = split_into_train_test(
-            train_df, test_df, target_col="target"
+        data_dict: dict[str, Any] = split_into_train_val_test_sets(
+            data_df, test_size=self.test_size, target_col="target"
         )
 
         logger.info("Data preparation complete.")
-        self.input_example = train_df
         return data_dict
 
-    def _train_random_forest(self) -> dict[str, Any]:
+    def _train_random_forest(self, params: dict[str, Any]) -> dict[str, Any]:
         """Train a Random Forest model with time series cross-validation."""
 
         tscv = TimeSeriesSplit(
@@ -88,36 +93,34 @@ class ModelTrainer:
             test_size=self.cv_test_size,
             gap=0,
         )
-        rf_reg = RandomForestRegressor(
-            **app_config.model_training_config.random_forest_config.model_dump(),
-            random_state=self.random_seed,
-        )
+        params["random_state"] = self.random_seed
+        model = RandomForestRegressor(**params)
         data_dict: dict[str, Any] = self.data_dict
         x_train, y_train = data_dict["x_train"], data_dict["y_train"]
+        x_val, y_val = data_dict["x_val"], data_dict["y_val"]
+        X, y = combine_train_val(x_train, y_train, x_val, y_val)
 
         logger.info(
             "Starting Random Forest training with TimeSeriesSplit cross-validation."
         )
-        cv_results: dict[str, Any] = cross_validate_sklearn_model(
-            tscv, x_train, y_train, rf_reg
-        )
+        cv_results: dict[str, Any] = cross_validate_sklearn_model(tscv, X, y, model)
 
         return cv_results
 
-    def _train_xgboost(self) -> dict[str, Any]:
+    def _train_xgboost(self, params: dict[str, Any]) -> dict[str, Any]:
         """Train an XGBoost model with time series cross-validation."""
         data_dict: dict[str, Any] = self.data_dict
 
         x_train, y_train = data_dict["x_train"], data_dict["y_train"]
-        x_val, y_val = data_dict["x_test"], data_dict["y_test"]
-        dtrain = xgb.DMatrix(x_train, y_train, enable_categorical=True)
-        dvalid = xgb.DMatrix(x_val, y_val, enable_categorical=True)
+        x_val, y_val = data_dict["x_val"], data_dict["y_val"]
+        x_test, y_test = data_dict["x_test"], data_dict["y_test"]
 
-        params: dict[str, Any] = (
-            app_config.model_training_config.xgboost_config.model_dump()
-        )
+        X, y = combine_train_val(x_train, y_train, x_val, y_val)
+        dtrain = xgb.DMatrix(X, y, enable_categorical=True)
+        dtest = xgb.DMatrix(x_test, y_test, enable_categorical=True)
+
         params["seed"] = self.random_seed
-        early_stopping_rounds: int | None = params.pop("early_stopping_rounds", None)
+        early_stopping_rounds: int = params.pop("early_stopping_rounds", 10)
         num_boost_round: int = params.pop("num_boost_round", 500)
 
         # Cross-validation
@@ -140,9 +143,9 @@ class ModelTrainer:
             dtrain=dtrain,
             num_boost_round=best_num_rounds,
         )
-        preds = final_model.predict(dvalid)
+        preds = final_model.predict(dtest)
         metrics: dict[str, float | None] = compute_metrics(
-            y_val, preds, n_features=x_train.shape[1]
+            y_test, preds, n_features=x_train.shape[1]
         )
 
         return {
@@ -155,9 +158,41 @@ class ModelTrainer:
             },
         }
 
-    def _train_lightgbm(self) -> dict[str, Any]:
-        """Train a LightGBM model with time series cross-validation."""
-        return {}
+    def _train_lightgbm(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Train a LightGBM model."""
+        data_dict: dict[str, Any] = self.data_dict
+
+        x_train, y_train = data_dict["x_train"], data_dict["y_train"]
+        x_val, y_val = data_dict["x_val"], data_dict["y_val"]
+        x_test, y_test = data_dict["x_test"], data_dict["y_test"]
+
+        # Create datasets for LightGBM
+        lgb_train = lgb.Dataset(x_train, y_train)
+        lgb_val = lgb.Dataset(x_val, y_val, reference=lgb_train)
+
+        params["seed"] = self.random_seed
+        num_boost_round: int = params.pop("num_boost_round", 500)
+
+        model = lgb.train(
+            params,
+            lgb_train,
+            num_boost_round=num_boost_round,
+            valid_sets=[lgb_train, lgb_val],
+        )
+        preds = model.predict(x_test, num_iteration=model.best_iteration)
+        metrics: dict[str, float | None] = compute_metrics(
+            y_test, preds, n_features=x_train.shape[1]
+        )  # type: ignore
+
+        return {
+            "model": model,
+            "metrics": {
+                "RMSE": metrics.get("RMSE"),
+                "MAE": metrics.get("MAE"),
+                "MAPE": metrics.get("MAPE"),
+                "Adjusted_R2": metrics.get("Adjusted_R2"),
+            },
+        }
 
     def _hyperparameter_tuning_lightgbm(self) -> None:
         pass
@@ -183,15 +218,19 @@ class ModelTrainer:
                 # ================================
                 # ====== Train Random Forest =====
                 # ================================
-                rf_reg_results = self._train_random_forest()
-                y_pred: np.ndarray = rf_reg_results.get("model").predict(  # type: ignore
+                logger.info("Training Random Forest ...")
+                params_rf: dict[str, Any] = (
+                    app_config.model_training_config.random_forest_config.model_dump()
+                )
+                rf_reg_results = self._train_random_forest(params=params_rf)
+                y_pred: np.ndarray = rf_reg_results["model"].predict(
                     data_dict["x_test"]
                 )
 
                 # Feature importance
                 rf_model: RandomForestRegressor = rf_reg_results.get("model")
                 weights_ = rf_model.feature_importances_
-                model_name: str = type(rf_model).__name__
+                model_name: str = ModelType.RANDOM_FOREST
 
                 tags: dict[str, Any]
                 (_, tags) = get_model_feature_importance(
@@ -205,7 +244,7 @@ class ModelTrainer:
                 )
                 self.mlflow_tracker.log_model(
                     model=rf_model,
-                    model_name="RandomForestRegressor",
+                    model_name=model_name,
                     input_example=self.input_example,
                     save_format=ArtifactsType.PICKLE,
                 )
@@ -219,19 +258,23 @@ class ModelTrainer:
                         "predictions": y_pred,
                     }
                 )
-                logger.info("Random Forest training completed successfully.")
+                logger.info("🚀 Random Forest training completed successfully.")
 
                 # ================================
                 # ========= Train XGBoost ========
                 # ================================
-                xgb_results: dict[str, Any] = self._train_xgboost()
-                y_pred = xgb_results.get("model").predict(  # type: ignore
+                logger.info("Training XGBoost ...")
+                params_xgb: dict[str, Any] = (
+                    app_config.model_training_config.xgboost_config.model_dump()
+                )
+                xgb_results: dict[str, Any] = self._train_xgboost(params=params_xgb)
+                y_pred = xgb_results["model"].predict(
                     xgb.DMatrix(data_dict["x_test"], enable_categorical=True)
                 )
 
                 # Feature importance
                 xgb_model: xgb.Booster = xgb_results.get("model")
-                model_name = type(xgb_model).__name__
+                model_name = ModelType.XGBOOST
                 weights_dict: dict[str, float] = get_feature_importance_from_booster(
                     xgb_model,
                     column_names,
@@ -250,7 +293,7 @@ class ModelTrainer:
                 )
                 self.mlflow_tracker.log_model(
                     model=xgb_model,
-                    model_name="XGBoostRegressor",
+                    model_name=model_name,
                     input_example=self.input_example,
                     save_format=ArtifactsType.JSON,
                 )
@@ -265,9 +308,55 @@ class ModelTrainer:
                         "predictions": y_pred,
                     }
                 )
-                logger.info("XGBoost training completed successfully.")
+                logger.info("🚀 XGBoost training completed successfully.")
 
-                logger.info("✅ Model training completed successfully.")
+                # ================================
+                # ========= Train LightGBM =======
+                # ================================
+                logger.info("Training LightGBM ...")
+                params_lgb: dict[str, Any] = (
+                    app_config.model_training_config.lightgbm_config.model_dump()
+                )
+                lgb_results: dict[str, Any] = self._train_lightgbm(params=params_lgb)
+                y_pred = lgb_results["model"].predict(data_dict["x_test"])
+
+                # Feature importance
+                lgb_model: lgb.Booster = lgb_results.get("model")
+                model_name = ModelType.LIGHTGBM
+                feat_imp_df: pl.DataFrame = get_lightgbm_feature_importance(
+                    lgb_model, column_names
+                )
+                weights_ = feat_imp_df["gain_importance_normalized"].to_list()
+
+                _, tags = get_model_feature_importance(
+                    model_name=model_name, features=column_names, weights=weights_, n=20
+                )
+                self.mlflow_tracker.log_mlflow_artifact(
+                    object=tags,
+                    object_type=ArtifactsType.JSON,
+                    filename="feat_imp_lightgbm",
+                    artifact_dest="models/",
+                )
+                self.mlflow_tracker.log_model(
+                    model=lgb_model,
+                    model_name=model_name,
+                    input_example=self.input_example,
+                    save_format=ArtifactsType.TXT,
+                )
+                self.mlflow_tracker.log_metrics(lgb_results.get("metrics"))  # type: ignore
+
+                results.append(
+                    {
+                        "run_id": run_id,
+                        "model_name": model_name,
+                        "model": lgb_model,
+                        "metrics": lgb_results.get("metrics"),
+                        "predictions": y_pred,
+                    }
+                )
+                logger.info("🚀 LightGBM training completed successfully.")
+
+                logger.info("✅ ALL models training completed successfully.")
                 test_df: pl.DataFrame = pl.DataFrame(
                     data_dict["x_test"], schema=column_names
                 )
@@ -305,7 +394,7 @@ class ModelTrainer:
 
             return results
 
-        except Exception as e:
+        except TrainingError as e:
             logger.error(f"❌ Error during model training: {e}")
             raise
 
@@ -314,7 +403,7 @@ class ModelTrainer:
         study: optuna.study.Study, frozen_trial: optuna.trial.FrozenTrial
     ) -> None:
         """
-        Callback that logs when a trial improves the current best value for an Optuna study.
+        Callback that logs ONLY when a new best value is achieved.
 
         Parameters
         ----------
@@ -330,32 +419,40 @@ class ModelTrainer:
 
         Notes
         -----
-        This function updates ``study.user_attrs['winner']`` when a new best value is found and
-        logs either an initial-trial message or the percentage improvement; avoid using this
-        callback in distributed execution environments due to potential race conditions when
-        reading/updating ``study.user_attrs``.
+        This function only logs when a trial improves upon the current best value.
+        It updates study.user_attrs['previous_best'] to track improvements.
         """
-        winner = study.user_attrs.get("winner", None)
+        current_best: float | None = study.best_value
+        trial_value: float | None = frozen_trial.value
+        trial_number: int = frozen_trial.number
 
-        # Only respond when there is a best value to compare
-        if study.best_value is not None and winner != study.best_value:
-            study.set_user_attr("winner", study.best_value)
-            if winner is not None:
-                # protect against division by zero
-                if study.best_value == 0:
-                    improvement_percent = float("inf")
-                else:
-                    improvement_percent = (
-                        abs(winner - study.best_value) / abs(study.best_value)
-                    ) * 100
+        # Only log if this trial achieved a new best value
+        if trial_value is not None and current_best == trial_value:
+            # Get the previous best value from user attributes
+            previous_best: float | None = study.user_attrs.get("previous_best", None)
+
+            if previous_best is None:
+                # First trial (initial champion)
                 logger.info(
-                    f"Trial {frozen_trial.number} achieved value: {frozen_trial.value} with "
-                    f"{improvement_percent:.4f}% improvement",
+                    f"Initial trial {trial_number} achieved value: {trial_value}"
                 )
             else:
+                # Calculate improvement percentage
+                if abs(previous_best) < 1e-10:  # Handle near-zero values
+                    improvement_percent = (
+                        float("inf") if previous_best != current_best else 0.0
+                    )
+                else:
+                    improvement_percent = (
+                        (previous_best - current_best) / abs(previous_best)
+                    ) * 100
+
                 logger.info(
-                    f"Initial trial {frozen_trial.number} achieved value: {frozen_trial.value}"
+                    f"Trial {trial_number} achieved value: {trial_value} with {improvement_percent:.4f}% improvement"
                 )
+
+            # Update the previous best for next comparison
+            study.set_user_attr("previous_best", current_best)
 
     def _objective_random_forest(self, trial: optuna.Trial) -> float:
         """Objective function for Optuna hyperparameter optimization using TimeSeriesSplit."""
@@ -423,33 +520,47 @@ class ModelTrainer:
         with self.mlflow_tracker.start_run(nested=True):
             optuna_config = app_config.optuna_config.xgboost_optuna_config
             # Define hyperparameters
+            # NB: Use `log=True` for parameters that span several orders of magnitude
+            # e.g , learning_rate, reg_alpha, reg_lambda, etc.
             params = {
                 "objective": "reg:squarederror",
                 "eval_metric": optuna_config.eval_metric,
                 "booster": trial.suggest_categorical("booster", optuna_config.booster),
-                "lambda": trial.suggest_float(
-                    "lambda_",
-                    optuna_config.lambda_[0],
-                    optuna_config.lambda_[1],
+                "reg_lambda": trial.suggest_float(
+                    "reg_lambda",
+                    optuna_config.reg_lambda[0],
+                    optuna_config.reg_lambda[1],
                     log=True,
                 ),
-                "alpha": trial.suggest_float(
-                    "alpha", optuna_config.alpha[0], optuna_config.alpha[1], log=True
+                "reg_alpha": trial.suggest_float(
+                    "reg_alpha",
+                    optuna_config.reg_alpha[0],
+                    optuna_config.reg_alpha[1],
+                    log=True,
                 ),
+                "gamma": trial.suggest_float(
+                    "gamma", optuna_config.gamma[0], optuna_config.gamma[1], log=True
+                ),
+                "subsample": trial.suggest_float(
+                    "subsample", optuna_config.subsample[0], optuna_config.subsample[1]
+                ),
+                "eta": trial.suggest_float(
+                    "eta", optuna_config.eta[0], optuna_config.eta[1], log=True
+                ),
+                "n_estimators": trial.suggest_int(
+                    "n_estimators",
+                    optuna_config.n_estimators[0],
+                    optuna_config.n_estimators[1],
+                ),
+                "grow_policy": trial.suggest_categorical(
+                    "grow_policy", optuna_config.grow_policy
+                ),
+                "seed": self.random_seed,
             }
 
             if params["booster"] == "gbtree" or params["booster"] == "dart":
                 params["max_depth"] = trial.suggest_int(
                     "max_depth", optuna_config.max_depth[0], optuna_config.max_depth[1]
-                )
-                params["eta"] = trial.suggest_float(
-                    "eta", optuna_config.eta[0], optuna_config.eta[1], log=True
-                )
-                params["gamma"] = trial.suggest_float(
-                    "gamma", optuna_config.gamma[0], optuna_config.gamma[1], log=True
-                )
-                params["grow_policy"] = trial.suggest_categorical(
-                    "grow_policy", optuna_config.grow_policy
                 )
 
             data_dict: dict[str, Any] = self.data_dict
@@ -489,6 +600,8 @@ class ModelTrainer:
         """
         optuna_config = app_config.optuna_config.random_forest_optuna_config
         n_trials: int = optuna_config.n_trials
+
+        logger.info("🚨 Starting hyperparameter tuning for Random Forest...")
         with self.mlflow_tracker.start_run(nested=True) as run_id:
             study = optuna.create_study(
                 direction="minimize",
@@ -499,13 +612,13 @@ class ModelTrainer:
                 n_trials=n_trials,
                 callbacks=[self.champion_callback],
             )
-            print("Best trial:")
             best_trial = study.best_trial
             best_params: dict[str, Any] = best_trial.params
             rmse: float = best_trial.user_attrs.get("RMSE", 0.0)
             mae: float = best_trial.user_attrs.get("MAE", 0.0)
             mape: float = best_trial.user_attrs.get("MAPE", 0.0)
             adj_r2: float | None = best_trial.user_attrs.get("Adjusted_R2", None)
+            print(f"Best trial: {best_trial.number} | Value: {best_trial.value}")
 
             # Log best parameters and metrics to MLflow
             self.mlflow_tracker.log_params(best_params)
@@ -522,7 +635,7 @@ class ModelTrainer:
             tags: dict[str, Any] = (
                 app_config.experiment_config.experiment_tags.model_dump()
             )
-            tags["model_family"] = "RandomForest"
+            tags["model_family"] = ModelType.RANDOM_FOREST
             self.mlflow_tracker.set_tags(tags=tags)
 
             # Build model
@@ -571,6 +684,8 @@ class ModelTrainer:
     def _hyperparameter_tuning_xgboost(self) -> dict[str, Any]:
         optuna_config = app_config.optuna_config.xgboost_optuna_config
         n_trials: int = optuna_config.n_trials
+
+        logger.info("🚨 Starting hyperparameter tuning for XGBoost...")
         with self.mlflow_tracker.start_run(nested=True) as run_id:
             study = optuna.create_study(
                 direction="minimize",
@@ -581,13 +696,13 @@ class ModelTrainer:
                 n_trials=n_trials,
                 callbacks=[self.champion_callback],
             )
-            print("Best trial:")
             best_trial = study.best_trial
             best_params: dict[str, Any] = best_trial.params
             rmse: float = best_trial.user_attrs.get("RMSE", 0.0)
             mae: float = best_trial.user_attrs.get("MAE", 0.0)
             mape: float = best_trial.user_attrs.get("MAPE", 0.0)
             adj_r2: float | None = best_trial.user_attrs.get("Adjusted_R2", None)
+            print(f"Best trial: {best_trial.number} | Value: {best_trial.value}")
 
             # Log best parameters and metrics to MLflow
             self.mlflow_tracker.log_params(best_params)
@@ -604,7 +719,7 @@ class ModelTrainer:
             tags: dict[str, Any] = (
                 app_config.experiment_config.experiment_tags.model_dump()
             )
-            tags["model_family"] = "XGBoost"
+            tags["model_family"] = ModelType.XGBOOST
             self.mlflow_tracker.set_tags(tags=tags)
 
             # Build model
@@ -664,7 +779,7 @@ class ModelTrainer:
 
             return results
 
-        except Exception as e:
+        except HyperparameterTuningError as e:
             logger.error(f"❌ Error during hyperparameter tuning: {e}")
             raise
 

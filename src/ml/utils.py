@@ -1,5 +1,6 @@
 from typing import Any, Literal
 
+import lightgbm as lgb
 import narwhals as nw
 import numpy as np
 import polars as pl
@@ -30,7 +31,7 @@ def split_temporal_data(
     return (train_data.to_native(), test_data.to_native())
 
 
-def split_into_train_test(
+def split_into_train_test_sets(
     train_df: IntoDataFrameT, test_df: IntoDataFrameT, target_col: str
 ) -> dict[str, Any]:
     """Split data into features and target for training and testing sets."""
@@ -48,6 +49,68 @@ def split_into_train_test(
         "x_test": x_test,
         "y_test": y_test,
         "columns": columns,
+    }
+
+
+def split_into_train_val_test_sets(
+    data: IntoDataFrameT, test_size: float, target_col: str
+) -> dict[str, Any]:
+    """
+    Split a feature dataframe into temporal train, validation, and test sets.
+
+    Parameters
+    ----------
+    data : IntoDataFrameT
+        Input feature dataframe containing the target column.
+    test_size : float
+        Proportion of the data reserved for validation and test splits. Must be in (0, 1).
+    target_col : str
+        Name of the target column used for supervised learning.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary with feature and target arrays for train, validation, and test sets,
+        along with the feature column names.
+    """
+    if not 0 < test_size < 1:
+        raise ValueError("`test_size` must be between 0 and 1 (exclusive).")
+
+    _train_df, test_df = split_temporal_data(data=data, test_size=test_size)
+    train_df, val_df = split_temporal_data(data=_train_df, test_size=test_size)
+
+    train_val_split = split_into_train_test_sets(
+        train_df=train_df, test_df=val_df, target_col=target_col
+    )
+    train_test_split = split_into_train_test_sets(
+        train_df=_train_df, test_df=test_df, target_col=target_col
+    )
+
+    x_train, y_train = train_val_split["x_train"], train_val_split["y_train"]
+    x_val, y_val = train_val_split["x_test"], train_val_split["y_test"]
+    x_test, y_test = train_test_split["x_test"], train_test_split["y_test"]
+
+    if train_val_split["columns"] != train_test_split["columns"]:
+        raise ValueError("Feature column mismatch between validation and test splits.")
+    if x_train.shape[0] + x_val.shape[0] != train_test_split["x_train"].shape[0]:
+        raise ValueError("Train and validation rows do not sum to the expected total.")
+
+    print(
+        (
+            f"Shapes -> x_train: {x_train.shape}, y_train: {y_train.shape}, "
+            f"x_val: {x_val.shape}, y_val: {y_val.shape}, "
+            f"x_test: {x_test.shape}, y_test: {y_test.shape}"
+        )
+    )
+
+    return {
+        "x_train": x_train,
+        "y_train": y_train,
+        "x_val": x_val,
+        "y_val": y_val,
+        "x_test": x_test,
+        "y_test": y_test,
+        "columns": train_val_split["columns"],
     }
 
 
@@ -265,7 +328,7 @@ def get_feature_importance_from_booster(
     feature_names: list[str],
     importance_type: Literal[
         "weight", "gain", "cover", "total_gain", "total_cover"
-    ] = "weight",
+    ] = "gain",
 ) -> dict[str, float]:
     """
     Extract feature importance from XGBoost Booster object.
@@ -291,14 +354,59 @@ def get_feature_importance_from_booster(
     """
     # Get feature importance scores from booster
     importance_dict = model.get_score(importance_type=importance_type)
-
+    # Normalize importance scores
+    sum_: float = sum(importance_dict.values())
+    imp_dict = {feat: round(imp / sum_, 5) for feat, imp in importance_dict.items()}  # type: ignore
     # Map feature indices (f0, f1, f2...) to actual feature names
     feature_importance: dict[str, float] = {
-        feature_name: importance_dict.get(f"f{idx}", 0.0)
+        feature_name: imp_dict.get(f"f{idx}", 0.0)
         for idx, feature_name in enumerate(feature_names)
     }
 
     return feature_importance
+
+
+def get_lightgbm_feature_importance(
+    model: lgb.Booster, features: list[str]
+) -> pl.DataFrame:
+    """
+    Get feature importance from a LightGBM model.
+
+    Parameters
+    ----------
+    model : lgb.Booster
+        Trained LightGBM model
+    features : list[str]
+        List of feature names
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing feature importance scores
+    """
+
+    # Get different types of importance
+    split_importance = model.feature_importance(importance_type="split")
+    gain_importance = model.feature_importance(importance_type="gain")
+
+    # Create DataFrame for easy analysis
+    importance_df = pl.DataFrame(
+        {
+            "feature": features,
+            "split_importance": split_importance,
+            "gain_importance": gain_importance,
+        }
+    )
+
+    # Normalize importance scores
+    return importance_df.with_columns(
+        (pl.col("split_importance") / pl.col("split_importance").sum()).alias(
+            "split_importance_normalized"
+        ),
+        (pl.col("gain_importance") / pl.col("gain_importance").sum()).alias(
+            "gain_importance_normalized"
+        ),
+    )
 
 
 def extract_metrics(data: dict[str, Any]) -> dict[str, Any]:
@@ -342,3 +450,49 @@ def create_metrics_df(data_list: list[dict[str, Any]]) -> pl.DataFrame:
     """
     all_metrics: list[dict[str, Any]] = [extract_metrics(data) for data in data_list]
     return pl.DataFrame(all_metrics)
+
+
+def combine_train_val(
+    x_train: np.ndarray, y_train: np.ndarray, x_val: np.ndarray, y_val: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Combine training and validation feature/target arrays into a single train set.
+
+    Parameters
+    ----------
+    x_train : np.ndarray
+        Training features, shape (n_train, n_features).
+    y_train : np.ndarray
+        Training targets, shape (n_train,) or (n_train, 1).
+    x_val : np.ndarray
+        Validation features, shape (n_val, n_features).
+    y_val : np.ndarray
+        Validation targets, shape (n_val,) or (n_val, 1).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        Tuple containing:
+        - X : np.ndarray, stacked features with shape (n_train + n_val, n_features)
+        - y : np.ndarray, 1D stacked targets with shape (n_train + n_val,)
+
+    Raises
+    ------
+    ValueError
+        If input dimensions are incompatible (mismatched feature counts or lengths).
+    """
+    # Validation
+    if x_train.ndim != 2 or x_val.ndim != 2:
+        raise ValueError("x_train and x_val must be 2D arrays (n_samples, n_features).")
+    if x_train.shape[1] != x_val.shape[1]:
+        raise ValueError("Feature dimension mismatch between x_train and x_val.")
+    if x_train.shape[0] != y_train.ravel().shape[0]:
+        raise ValueError("Number of rows in x_train and y_train must match.")
+    if x_val.shape[0] != y_val.ravel().shape[0]:
+        raise ValueError("Number of rows in x_val and y_val must match.")
+
+    # Stack features and concatenate targets into a 1D array
+    X = np.vstack((x_train, x_val))
+    y = np.vstack((y_train.reshape(-1, 1), y_val.reshape(-1, 1))).ravel()
+
+    return X, y

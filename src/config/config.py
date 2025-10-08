@@ -56,17 +56,10 @@ class FeatureConfig(BaseSchema):
 
 class ExperimentTags(BaseSchema):
     project: str = Field(..., description="Project name")
-    team: str = Field(..., description="Team name")
-    owner: str = Field(..., description="Owner of the experiment")
-    optimizer_engine: Literal["optuna", "grid_search"] = Field(
-        ..., description="Optimizer engine used"
-    )
-    feature_set_version: int = Field(..., description="Feature set version")
     metric_of_interest: Literal["RMSE", "MAE", "MAPE", "MSE"] = Field(
         ..., description="Metric of interest"
     )
-    hardware: Literal["cpu", "gpu"] = Field(..., description="Hardware used")
-    others: dict[str, str] | None = Field(
+    others: dict[str, int | str] | None = Field(
         None, description="Additional tags as key-value pairs"
     )
 
@@ -79,7 +72,7 @@ class ExperimentConfig(BaseSchema):
 class GeneralConfig(BaseSchema):
     random_seed: int = Field(..., description="Random seed for reproducibility")
     test_size: float = Field(
-        ..., description="Proportion of data to be used as test set"
+        ..., ge=0, le=1, description="Proportion of data to be used as test set"
     )
     cv_test_size: int = Field(
         ..., description="Size of the test set for cross-validation"
@@ -136,18 +129,24 @@ class XGBoostOptunaConfig(BaseSchema):
     booster: list[Literal["gbtree", "gblinear", "dart"]] = Field(
         ..., description="Booster type"
     )
-    lambda_: tuple[float, float] = Field(
+    reg_lambda: tuple[float, float] = Field(
         ..., description="Range for L2 regularization term on weights"
     )
-    alpha: tuple[float, float] = Field(
+    reg_alpha: tuple[float, float] = Field(
         ..., description="Range for L1 regularization term on weights"
+    )
+    gamma: tuple[float, float] = Field(
+        ..., description="Range for L2 regularization term on weights"
     )
     max_depth: tuple[int, int] = Field(
         ..., description="Range for maximum depth of the trees"
     )
+    subsample: tuple[float, float] = Field(
+        ..., description="Range for subsample ratio of the training instances"
+    )
     eta: tuple[float, float] = Field(..., description="Range for learning rate")
-    gamma: tuple[float, float] = Field(
-        ..., description="Range for L2 regularization term on weights"
+    n_estimators: tuple[int, int] = Field(
+        ..., description="Range for number of estimators"
     )
     grow_policy: tuple[
         Literal["depthwise", "lossguide"], Literal["depthwise", "lossguide"]
@@ -155,6 +154,15 @@ class XGBoostOptunaConfig(BaseSchema):
     n_trials: int = Field(
         ..., description="Number of Optuna trials for hyperparameter optimization"
     )
+
+
+class LightGBMConfig(BaseSchema):
+    objective: str = Field(..., description="Objective function")
+    metric: list[str] = Field(..., description="List of evaluation metrics")
+    learning_rate: float = Field(..., description="Learning rate")
+    early_stopping_rounds: int | None = Field(None, description="Early stopping rounds")
+    num_boost_round: int = Field(500, description="Number of boosting rounds")
+    verbose: int = Field(1, ge=-1, le=3, description="Verbosity of training")
 
 
 class ModelTrainingConfig(BaseSchema):
@@ -168,6 +176,9 @@ class ModelTrainingConfig(BaseSchema):
     )
     xgboost_config: XGBoostConfig = Field(
         ..., description="XGBoost model configuration"
+    )
+    lightgbm_config: LightGBMConfig = Field(
+        ..., description="LightGBM model configuration"
     )
 
 

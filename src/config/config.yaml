@@ -30,17 +30,16 @@ config:
     experiment_name: bike rental
     experiment_tags:
       project: ${config.experiment_config.experiment_name}
-      team: data_science
-      owner: chinedu
-      optimizer_engine: optuna
-      feature_set_version: 1
       metric_of_interest: RMSE
-      hardware: cpu
       # Add any other relevant tags here
       others:
         {
-          "note": "Initial experiment setup",
+          "team": "data_science",
+          "scientist": "chinedu",
           "purpose": "Hyperparameter tuning",
+          "optimizer_engine": "optuna",
+          "feature_set_version": 1,
+          "hardware": "cpu",
         }
 
   model_training_config:
@@ -60,8 +59,15 @@ config:
       objective: "reg:squarederror"
       n_estimators: 100
       learning_rate: 0.1
-      early_stopping_rounds: 10
+      early_stopping_rounds: 20
       num_boost_round: 200
+    lightgbm_config:
+      objective: "regression"
+      metric: ["rmse", "mae"]
+      learning_rate: 0.05
+      early_stopping_rounds: 20
+      num_boost_round: 200
+      verbose: 1
 
   optuna_config:
     # Hyperparameter search space for Random Forest
@@ -72,19 +78,26 @@ config:
       min_samples_leaf: [1, 5]
       max_features: [null, "sqrt", "log2"]
       bootstrap: [true, false]
-      n_trials: 1
-    # Hyperparameter search space for XGBoost
+      n_trials: 5
+    # === Hyperparameter search space for XGBoost ===
     xgboost_optuna_config:
       objective: "reg:squarederror"
       eval_metric: "rmse"
       booster: ["gbtree", "gblinear", "dart"]
-      lambda_: [1e-8, 1.0]
-      alpha: [1e-8, 1.0]
-      max_depth: [50, 300]
-      eta: [1e-8, 1.0]
-      gamma: [1e-8, 1.0]
+      # Regularization parameters
+      reg_lambda: [0.001, 10.0] # L2 regularization term on weights
+      reg_alpha: [0.001, 10.0] # L1 regularization term on weights
+      gamma: [0.001, 10.0]
+      # Tree parameters
+      max_depth: [2, 10]
+      subsample: [0.1, 1.0] # Fraction of samples to be used for each tree
+      # Learning task parameters
+      eta: [0.001, 0.6] # learning rate
+      n_estimators: [100, 2000]
+      # Growth
       grow_policy: ["depthwise", "lossguide"]
-      n_trials: 5
+      # Number of boosting rounds
+      n_trials: 300
 
   api_config:
     title: Bike Rental Prediction API

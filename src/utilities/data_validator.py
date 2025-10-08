@@ -6,6 +6,7 @@ import narwhals.selectors as n_cs
 import pendulum
 from narwhals.typing import IntoFrameT
 
+from src.exceptions import DataValidationError
 from src.schemas import DataValidatorSchema
 
 EMPTY_DATAFRAME: str = "🚫 Empty dataframe"
@@ -590,18 +591,22 @@ def data_validator(data: IntoFrameT) -> DataValidatorSchema:
     >>> isinstance(result, dict)
     True
     """
-    config = DataValidatorConfig(
-        data=data,
-        schema_fns=[get_numeric_schema, get_string_schema],
-        info_fns=[
-            get_cardinality_info,
-            get_null_info,
-            get_duplicated_rows_info,
-            get_memory_usage_info,
-        ],
-        summary_fns=[
-            get_numeric_summary_stats,
-            get_categorical_summary_stats,
-        ],
-    )
-    return _data_validator(config)
+    try:
+        config = DataValidatorConfig(
+            data=data,
+            schema_fns=[get_numeric_schema, get_string_schema],
+            info_fns=[
+                get_cardinality_info,
+                get_null_info,
+                get_duplicated_rows_info,
+                get_memory_usage_info,
+            ],
+            summary_fns=[
+                get_numeric_summary_stats,
+                get_categorical_summary_stats,
+            ],
+        )
+        return _data_validator(config)
+
+    except DataValidationError as e:
+        raise e

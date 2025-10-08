@@ -3,7 +3,6 @@ import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Generator
 
@@ -16,21 +15,11 @@ import yaml  # type: ignore
 from narwhals.typing import IntoDataFrameT
 
 from src import create_logger
+from src.exceptions import MLFlowConnectionError, MLFlowError
+from src.schemas.types import ArtifactsType
 
 logger = create_logger("mlflow_tracker")
 type WriteFn = Callable[[Any, Path], None]
-
-
-class ArtifactsType(str, Enum):
-    """Enum for different types of artifacts."""
-
-    JSON = "json"
-    TXT = "txt"
-    YAML = "yaml"
-    PICKLE = "pkl"
-
-    def __str__(self) -> str:
-        return str(self.value)
 
 
 def write_json(obj: dict[str, Any] | Any, filepath: Path, indent: int = 2) -> None:
@@ -120,9 +109,10 @@ class MLFlowTracker:
         self.experiment_name = experiment_name
         self.tracking_uri = tracking_uri
         if not self._test_tracking_server():
-            raise ConnectionError(
+            raise MLFlowConnectionError(
                 f"Cannot connect to MLflow tracking server at {tracking_uri}"
             )
+
         mlflow.set_tracking_uri(tracking_uri)
         logger.info(f"Set MLflow tracking URI to: {tracking_uri}")
         self._set_experiment()
@@ -140,7 +130,7 @@ class MLFlowTracker:
             logger.debug(f"MLflow tracking server is reachable at {self.tracking_uri}")
             return response.status_code == 200
 
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(
                 f"Failed to connect to MLflow tracking server: {e}. Are you sure it's running?"
             )
@@ -162,7 +152,7 @@ class MLFlowTracker:
                 f"Set experiment to: {self.experiment_name} (ID: {experiment.experiment_id})"
             )
 
-        except Exception as e:
+        except MLFlowError as e:
             logger.warning(f"Failed to set experiment {self.experiment_name}: {e}")
             logger.warning("Falling back to default experiment")
 
@@ -219,12 +209,12 @@ class MLFlowTracker:
             # Auto-end run with success when context exits normally
             self.end_run(status="FINISHED")
 
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(f"Exception during MLflow run {run_id}: {e}", exc_info=True)
             # End run as failed and re-raise
             try:
                 self.end_run(status="FAILED")
-            except Exception as end_exc:
+            except MLFlowError as end_exc:
                 logger.warning(f"Failed to end run {run_id} after exception: {end_exc}")
             raise
 
@@ -246,7 +236,7 @@ class MLFlowTracker:
         try:
             mlflow.log_params(params)  # type: ignore
             logger.debug(f"Logged {len(params)} parameters")
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(f"Failed to log parameters: {e}")
             raise
 
@@ -268,7 +258,7 @@ class MLFlowTracker:
             logger.debug(
                 f"Logged {len(metrics)} metrics" + (f" at step {step}" if step else "")
             )
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(f"Failed to log metrics: {e}")
             raise
 
@@ -292,7 +282,7 @@ class MLFlowTracker:
         try:
             mlflow.set_tags(tags)  # type: ignore
             logger.debug(f"Set {len(tags)} tags")
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(f"Failed to set tags: {e}")
             raise
 
@@ -340,6 +330,8 @@ class MLFlowTracker:
                 # Determine model file extension and path
                 if save_format == ArtifactsType.JSON:
                     model_ext: str = "json"
+                elif save_format == ArtifactsType.TXT:
+                    model_ext = "txt"
                 else:
                     model_ext = "pkl"
 
@@ -366,6 +358,16 @@ class MLFlowTracker:
                         )
                     model.save_model(str(model_path))
                     logger.debug(f"Saved model as JSON: {model_path.name}")
+
+                elif save_format == ArtifactsType.TXT:
+                    if not hasattr(model, "save_model"):
+                        raise AttributeError(
+                            f"Model {type(model).__name__} does not have a 'save_model' method. "
+                            "Use ArtifactsType.PICKLE instead."
+                        )
+                    model.save_model(str(model_path))
+                    logger.debug(f"Saved model as TXT: {model_path.name}")
+
                 else:
                     raise ValueError(f"Unsupported save format: {save_format}")
 
@@ -432,7 +434,7 @@ class MLFlowTracker:
 
                 logger.info(f"✅ Successfully logged {model_name} model and metadata")
 
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(f"❌ Failed to log model {model_name}: {e}", exc_info=True)
             raise
 
@@ -481,7 +483,7 @@ class MLFlowTracker:
                 dest_info = f" to {artifact_dest}" if artifact_dest else ""
                 logger.debug(f"Logged artifact: {tmp_path.name}{dest_info}")
 
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(f"Failed to log artifact {filename}: {e}", exc_info=True)
             raise
 
@@ -523,7 +525,7 @@ class MLFlowTracker:
                             logger.debug(f"Deleted file: {item}")
                 logger.debug(f"Deleted contents of directory: {local_path}")
 
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(
                 f"Failed to log artifact from path {local_path}: {e}", exc_info=True
             )
@@ -559,9 +561,9 @@ class MLFlowTracker:
                     # s3_manager.sync_mlflow_artifacts_to_s3(run_id)
                     # logger.info(f"✅ Synced artifacts to S3 for run {run_id}")
                     pass
-                except Exception as e:
+                except MLFlowError as e:
                     logger.warning(f"❌ Failed to sync artifacts to S3: {e}")
 
-        except Exception as e:
+        except MLFlowError as e:
             logger.error(f"Failed to end run: {e}")
             raise
