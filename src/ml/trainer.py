@@ -181,8 +181,10 @@ class ModelTrainer:
         )
         preds = model.predict(x_test, num_iteration=model.best_iteration)
         metrics: dict[str, float | None] = compute_metrics(
-            y_test, preds, n_features=x_train.shape[1]
-        )  # type: ignore
+            y_test,
+            preds,  # type: ignore
+            n_features=x_train.shape[1],
+        )
 
         return {
             "model": model,
@@ -193,9 +195,6 @@ class ModelTrainer:
                 "Adjusted_R2": metrics.get("Adjusted_R2"),
             },
         }
-
-    def _hyperparameter_tuning_lightgbm(self) -> None:
-        pass
 
     def train_all_models(self) -> list[dict[str, Any]]:
         """Train models and log results to MLflow."""
@@ -248,7 +247,10 @@ class ModelTrainer:
                     input_example=self.input_example,
                     save_format=ArtifactsType.PICKLE,
                 )
-                self.mlflow_tracker.log_metrics(rf_reg_results.get("metrics"))  # type: ignore
+                metrics: dict[str, float | None] = self._format_metrics(  # type: ignore
+                    rf_reg_results.get("metrics", {}), prefix="rf"
+                )
+                self.mlflow_tracker.log_metrics(metrics)  # type: ignore
                 results.append(
                     {
                         "run_id": run_id,
@@ -297,7 +299,10 @@ class ModelTrainer:
                     input_example=self.input_example,
                     save_format=ArtifactsType.JSON,
                 )
-                self.mlflow_tracker.log_metrics(xgb_results.get("metrics"))  # type: ignore
+                metrics: dict[str, float | None] = self._format_metrics(  # type: ignore
+                    xgb_results.get("metrics", {}), prefix="xgb"
+                )
+                self.mlflow_tracker.log_metrics(metrics)  # type: ignore
 
                 results.append(
                     {
@@ -343,7 +348,10 @@ class ModelTrainer:
                     input_example=self.input_example,
                     save_format=ArtifactsType.TXT,
                 )
-                self.mlflow_tracker.log_metrics(lgb_results.get("metrics"))  # type: ignore
+                metrics = self._format_metrics(  # type: ignore
+                    lgb_results.get("metrics", {}), prefix="lgb"
+                )
+                self.mlflow_tracker.log_metrics(metrics)  # type: ignore
 
                 results.append(
                     {
@@ -523,7 +531,7 @@ class ModelTrainer:
             # NB: Use `log=True` for parameters that span several orders of magnitude
             # e.g , learning_rate, reg_alpha, reg_lambda, etc.
             params = {
-                "objective": "reg:squarederror",
+                "objective": optuna_config.objective,
                 "eval_metric": optuna_config.eval_metric,
                 "booster": trial.suggest_categorical("booster", optuna_config.booster),
                 "reg_lambda": trial.suggest_float(
@@ -555,6 +563,16 @@ class ModelTrainer:
                 "grow_policy": trial.suggest_categorical(
                     "grow_policy", optuna_config.grow_policy
                 ),
+                "num_round": trial.suggest_int(
+                    "num_round",
+                    optuna_config.num_round[0],
+                    optuna_config.num_round[1],
+                ),
+                "early_stopping_rounds": trial.suggest_int(
+                    "early_stopping_rounds",
+                    optuna_config.early_stopping_rounds[0],
+                    optuna_config.early_stopping_rounds[1],
+                ),
                 "seed": self.random_seed,
             }
 
@@ -575,6 +593,104 @@ class ModelTrainer:
             metrics: dict[str, float | None] = compute_metrics(
                 y_val, preds, n_features=x_train.shape[1]
             )
+
+            mean_rmse = metrics.get("RMSE", 0.0)
+            mean_mae = metrics.get("MAE", 0.0)
+            mean_mape = metrics.get("MAPE", 0.0)
+            mean_adj_r2 = metrics.get("Adjusted_R2", 0.0)
+            print(f"Trial {trial.number}: Mean RMSE = {mean_rmse}")
+
+            # Store additional metrics for analysis
+            trial.set_user_attr("RMSE", mean_rmse)
+            trial.set_user_attr("MAE", mean_mae)
+            trial.set_user_attr("MAPE", mean_mape)
+            trial.set_user_attr("Adjusted_R2", mean_adj_r2)
+
+            # Log to MLflow
+            self.mlflow_tracker.log_params(params)
+            self.mlflow_tracker.log_metrics(metrics)  # type: ignore
+
+        return mean_rmse  # type: ignore
+
+    def _objective_lightgbm(self, trial: optuna.Trial) -> float:
+        with self.mlflow_tracker.start_run(nested=True):
+            optuna_config = app_config.optuna_config.lightgbm_optuna_config
+            # Define hyperparameters
+            # NB: Use `log=True` for parameters that span several orders of magnitude
+            # e.g , learning_rate, reg_alpha, reg_lambda, etc.
+            params = {
+                "objective": optuna_config.objective,
+                "metric": optuna_config.metric,
+                "reg_lambda": trial.suggest_float(
+                    "reg_lambda",
+                    optuna_config.reg_lambda[0],
+                    optuna_config.reg_lambda[1],
+                    log=True,
+                ),
+                "reg_alpha": trial.suggest_float(
+                    "reg_alpha",
+                    optuna_config.reg_alpha[0],
+                    optuna_config.reg_alpha[1],
+                    log=True,
+                ),
+                "learning_rate": trial.suggest_float(
+                    "learning_rate",
+                    optuna_config.learning_rate[0],
+                    optuna_config.learning_rate[1],
+                    log=True,
+                ),
+                "num_leaves": trial.suggest_int(
+                    "num_leaves",
+                    optuna_config.num_leaves[0],
+                    optuna_config.num_leaves[1],
+                ),
+                "max_depth": trial.suggest_int(
+                    "max_depth", optuna_config.max_depth[0], optuna_config.max_depth[1]
+                ),
+                "min_child_samples": trial.suggest_int(
+                    "min_child_samples",
+                    optuna_config.min_child_samples[0],
+                    optuna_config.min_child_samples[1],
+                ),
+                "n_estimators": trial.suggest_int(
+                    "n_estimators",
+                    optuna_config.n_estimators[0],
+                    optuna_config.n_estimators[1],
+                ),
+                "num_boost_round": trial.suggest_int(
+                    "num_boost_round",
+                    optuna_config.num_boost_round[0],
+                    optuna_config.num_boost_round[1],
+                ),
+                "early_stopping_rounds": trial.suggest_int(
+                    "early_stopping_rounds",
+                    optuna_config.early_stopping_rounds[0],
+                    optuna_config.early_stopping_rounds[1],
+                ),
+                "seed": self.random_seed,
+            }
+
+            data_dict: dict[str, Any] = self.data_dict
+
+            x_train, y_train = data_dict["x_train"], data_dict["y_train"]
+            x_val, y_val = data_dict["x_val"], data_dict["y_val"]
+            x_test, y_test = data_dict["x_test"], data_dict["y_test"]
+
+            # Create datasets for LightGBM
+            lgb_train = lgb.Dataset(x_train, y_train)
+            lgb_val = lgb.Dataset(x_val, y_val, reference=lgb_train)
+
+            # num_boost_round: int = params.pop("num_boost_round", 500)
+            model = lgb.train(
+                params,
+                lgb_train,
+                # num_boost_round=num_boost_round,
+                valid_sets=[lgb_train, lgb_val],
+            )
+            preds = model.predict(x_test, num_iteration=model.best_iteration)
+            metrics: dict[str, float | None] = compute_metrics(
+                y_test, preds, n_features=x_train.shape[1]
+            )  # type: ignore
 
             mean_rmse = metrics.get("RMSE", 0.0)
             mean_mae = metrics.get("MAE", 0.0)
@@ -671,13 +787,13 @@ class ModelTrainer:
             )
             self.mlflow_tracker.log_model(
                 trained_model,
-                model_name="RandomForestRegressor",
+                model_name=ModelType.RANDOM_FOREST,
                 input_example=self.input_example,
             )
 
         return {
             "run_id": run_id,
-            "model_name": "RandomForestRegressor",
+            "model_name": ModelType.RANDOM_FOREST,
             "best_params": best_params,
         }
 
@@ -748,14 +864,92 @@ class ModelTrainer:
             )
             self.mlflow_tracker.log_model(
                 xgb_model,
-                model_name="XGBoostRegressor",
+                model_name=ModelType.XGBOOST,
                 input_example=self.input_example,
                 save_format=ArtifactsType.JSON,
             )
 
         return {
             "run_id": run_id,
-            "model_name": "XGBoostRegressor",
+            "model_name": ModelType.XGBOOST,
+            "best_params": best_params,
+        }
+
+    def _hyperparameter_tuning_lightgbm(self) -> dict[str, Any]:
+        optuna_config = app_config.optuna_config.lightgbm_optuna_config
+        n_trials: int = optuna_config.n_trials
+
+        logger.info("🚨 Starting hyperparameter tuning for LightGBM...")
+        with self.mlflow_tracker.start_run(nested=True) as run_id:
+            study = optuna.create_study(
+                direction="minimize",
+                sampler=optuna.samplers.TPESampler(seed=self.random_seed),
+            )
+            study.optimize(
+                self._objective_lightgbm,
+                n_trials=n_trials,
+                callbacks=[self.champion_callback],
+            )
+            best_trial = study.best_trial
+            best_params: dict[str, Any] = best_trial.params
+            rmse: float = best_trial.user_attrs.get("RMSE", 0.0)
+            mae: float = best_trial.user_attrs.get("MAE", 0.0)
+            mape: float = best_trial.user_attrs.get("MAPE", 0.0)
+            adj_r2: float | None = best_trial.user_attrs.get("Adjusted_R2", None)
+            print(f"Best trial: {best_trial.number} | Value: {best_trial.value}")
+
+            # Log best parameters and metrics to MLflow
+            self.mlflow_tracker.log_params(best_params)
+            self.mlflow_tracker.log_metrics(
+                {
+                    "best_rmse": best_trial.value,
+                    "mean_rmse": rmse,
+                    "mean_mae": mae,
+                    "mean_mape": mape,
+                    "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
+                }
+            )
+            # Log tags
+            tags: dict[str, Any] = (
+                app_config.experiment_config.experiment_tags.model_dump()
+            )
+            tags["model_family"] = ModelType.LIGHTGBM
+            self.mlflow_tracker.set_tags(tags=tags)
+
+            # Build model
+            data_dict: dict[str, Any] = self.data_dict
+            x_train, y_train = data_dict["x_train"], data_dict["y_train"]
+            dtrain = xgb.DMatrix(x_train, y_train, enable_categorical=True)
+            xgb_model = xgb.train(best_params, dtrain)
+
+            # Feature importance
+            column_names = self.data_dict["columns"]
+            model_name = type(xgb_model).__name__
+            weights_dict: dict[str, float] = get_feature_importance_from_booster(
+                xgb_model,
+                column_names,
+                importance_type="weight",
+            )
+            weights_ = list(weights_dict.values())
+            (_, feat_importance) = get_model_feature_importance(
+                model_name=model_name, features=column_names, weights=weights_, n=20
+            )
+            self.mlflow_tracker.log_mlflow_artifact(
+                object=feat_importance,
+                object_type=ArtifactsType.JSON,
+                filename="feat_imp_lightgbm",
+                artifact_dest="models/",
+            )
+            self.mlflow_tracker.log_model(
+                xgb_model,
+                model_name=ModelType.LIGHTGBM,
+                input_example=self.input_example,
+                save_format=ArtifactsType.JSON,
+            )
+
+        return {
+            "run_id": run_id,
+            "model_name": ModelType.LIGHTGBM,
             "best_params": best_params,
         }
 
@@ -769,12 +963,21 @@ class ModelTrainer:
             # ========= Random Forest ========
             # ================================
             rf_results: dict[str, Any] = self._hyperparameter_tuning_random_forest()
+            results.append(rf_results)
 
             # ================================
             # ============ XGBoost ===========
             # ================================
             xgb_results: dict[str, Any] = self._hyperparameter_tuning_xgboost()
-            results.extend([rf_results, xgb_results])
+            results.append(xgb_results)
+
+            # ================================
+            # ============ LightGBM ==========
+            # ================================
+            lgb_results: dict[str, Any] = self._hyperparameter_tuning_lightgbm()
+            results.append(lgb_results)
+
+            # All done
             logger.info("✅ Hyperparameter tuning completed successfully.")
 
             return results
@@ -798,3 +1001,8 @@ class ModelTrainer:
         except Exception as e:
             # Don't fail the entire run
             logger.error(f"❌ Failed to generate visualizations: {e}")
+
+    @staticmethod
+    def _format_metrics(metrics: dict[str, float], prefix: str) -> dict[str, float]:
+        """Format metric names by adding a prefix."""
+        return {f"{prefix}_{k}": v for k, v in metrics.items() if v is not None}

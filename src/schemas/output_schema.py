@@ -60,3 +60,12 @@ class DataValidatorSchema(BaseSchema):
     data_shape: DataShape
     summary_statistics: SummaryStatistics
     other_info: OtherInfo
+
+
+class HealthCheck(BaseSchema):
+    """
+    Health check response model.
+    """
+
+    status: str = "healthy"
+    version: str = "0.1.0"

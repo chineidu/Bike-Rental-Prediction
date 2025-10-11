@@ -151,6 +151,12 @@ class XGBoostOptunaConfig(BaseSchema):
     grow_policy: tuple[
         Literal["depthwise", "lossguide"], Literal["depthwise", "lossguide"]
     ] = Field(..., description="Options for grow policy")
+    num_round: tuple[int, int] = Field(
+        ..., description="Range for number of boosting rounds"
+    )
+    early_stopping_rounds: tuple[int, int] = Field(
+        ..., description="Range for number of early stopping rounds"
+    )
     n_trials: int = Field(
         ..., description="Number of Optuna trials for hyperparameter optimization"
     )
@@ -163,6 +169,39 @@ class LightGBMConfig(BaseSchema):
     early_stopping_rounds: int | None = Field(None, description="Early stopping rounds")
     num_boost_round: int = Field(500, description="Number of boosting rounds")
     verbose: int = Field(1, ge=-1, le=3, description="Verbosity of training")
+
+
+class LightGBMOptunaConfig(BaseSchema):
+    objective: str = Field(..., description="Objective function")
+    metric: list[str] = Field(..., description="List of evaluation metrics")
+    reg_lambda: tuple[float, float] = Field(
+        ..., description="Range for L2 regularization term on weights"
+    )
+    reg_alpha: tuple[float, float] = Field(
+        ..., description="Range for L1 regularization term on weights"
+    )
+    learning_rate: tuple[float, float] = Field(
+        ..., description="Range for learning rate"
+    )
+    num_leaves: tuple[int, int] = Field(..., description="Range for number of leaves")
+    max_depth: tuple[int, int] = Field(
+        ..., description="Range for maximum depth of the trees"
+    )
+    min_child_samples: tuple[int, int] = Field(
+        ..., description="Range for minimum child samples"
+    )
+    n_estimators: tuple[int, int] = Field(
+        ..., description="Range for number of estimators"
+    )
+    n_trials: int = Field(
+        ..., description="Number of Optuna trials for hyperparameter optimization"
+    )
+    num_boost_round: tuple[int, int] = Field(
+        ..., description="Range for number of boosting rounds"
+    )
+    early_stopping_rounds: tuple[int, int] = Field(
+        ..., description="Range for number of early stopping rounds"
+    )
 
 
 class ModelTrainingConfig(BaseSchema):
@@ -190,6 +229,9 @@ class OptunaConfig(BaseSchema):
     )
     xgboost_optuna_config: XGBoostOptunaConfig = Field(
         ..., description="XGBoost Optuna configuration"
+    )
+    lightgbm_optuna_config: LightGBMOptunaConfig = Field(
+        ..., description="LightGBM Optuna configuration"
     )
 
 

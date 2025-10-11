@@ -220,13 +220,13 @@ def compute_autocorrelation(series: nw.Series, max_lag: int = 24) -> dict[int, f
     for lag in range(1, max_lag + 1):
         try:
             # Create a DataFrame with original and lagged series
-            df_corr: nw.DataFrame = nw.from_native(
+            df_corr: nw.DataFrame = nw.from_native(  # type: ignore
                 pl.DataFrame({"original": series, "lagged": series.shift(lag)})
             ).drop_nulls()
 
             # Compute correlation if we have sufficient data
             if df_corr.shape[0] > 1:
-                correlation = _calculate_corr(df_corr["original"], df_corr["lagged"])
+                correlation = _calculate_corr(df_corr["original"], df_corr["lagged"])  # type: ignore
                 autocorr_values[lag] = correlation
             else:
                 autocorr_values[lag] = None  # type: ignore
