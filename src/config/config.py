@@ -144,6 +144,9 @@ class XGBoostOptunaConfig(BaseSchema):
     subsample: tuple[float, float] = Field(
         ..., description="Range for subsample ratio of the training instances"
     )
+    min_child_weight: tuple[int, int] = Field(
+        ..., description="Range for minimum sum of instance weight needed in a child"
+    )
     eta: tuple[float, float] = Field(..., description="Range for learning rate")
     n_estimators: tuple[int, int] = Field(
         ..., description="Range for number of estimators"
@@ -151,9 +154,6 @@ class XGBoostOptunaConfig(BaseSchema):
     grow_policy: tuple[
         Literal["depthwise", "lossguide"], Literal["depthwise", "lossguide"]
     ] = Field(..., description="Options for grow policy")
-    num_round: tuple[int, int] = Field(
-        ..., description="Range for number of boosting rounds"
-    )
     early_stopping_rounds: tuple[int, int] = Field(
         ..., description="Range for number of early stopping rounds"
     )
@@ -189,9 +189,6 @@ class LightGBMOptunaConfig(BaseSchema):
     )
     min_child_samples: tuple[int, int] = Field(
         ..., description="Range for minimum child samples"
-    )
-    n_estimators: tuple[int, int] = Field(
-        ..., description="Range for number of estimators"
     )
     n_trials: int = Field(
         ..., description="Number of Optuna trials for hyperparameter optimization"

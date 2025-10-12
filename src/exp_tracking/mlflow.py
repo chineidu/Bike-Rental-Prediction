@@ -8,15 +8,17 @@ from typing import Any, Callable, Generator
 
 import httpx
 import joblib
+import lightgbm as lgb
 import mlflow
 import narwhals as nw
 import polars as pl
+import xgboost as xgb
 import yaml  # type: ignore
 from narwhals.typing import IntoDataFrameT
 
 from src import create_logger
 from src.exceptions import MLFlowConnectionError, MLFlowError
-from src.schemas.types import ArtifactsType
+from src.schemas.types import ArtifactsType, ModelType
 
 logger = create_logger("mlflow_tracker")
 type WriteFn = Callable[[Any, Path], None]
@@ -210,7 +212,7 @@ class MLFlowTracker:
             self.end_run(status="FINISHED")
 
         except MLFlowError as e:
-            logger.error(f"Exception during MLflow run {run_id}: {e}", exc_info=True)
+            logger.error(f"Exception during MLflow run {run_id}: {e}")
             # End run as failed and re-raise
             try:
                 self.end_run(status="FAILED")
@@ -289,7 +291,7 @@ class MLFlowTracker:
     def log_model(
         self,
         model: Any,
-        model_name: str,
+        model_name: str | ModelType,
         input_example: IntoDataFrameT | None = None,
         signature: Any | None = None,  # noqa: ARG002
         registered_model_name: str | None = None,  # noqa: ARG002
@@ -302,7 +304,7 @@ class MLFlowTracker:
         ----------
         model : Any
             Model object to log.
-        model_name : str
+        model_name : str | ModelType
             Name for the model artifact.
         input_example : IntoDataFrameT, optional
             Example input data for the model (DataFrame-like).
@@ -321,6 +323,7 @@ class MLFlowTracker:
 
         """
         datetime_now: str = datetime.now().isoformat(timespec="seconds")
+        model_name = str(model_name)
         n_example_rows: int = 5
 
         try:
@@ -435,7 +438,7 @@ class MLFlowTracker:
                 logger.info(f"✅ Successfully logged {model_name} model and metadata")
 
         except MLFlowError as e:
-            logger.error(f"❌ Failed to log model {model_name}: {e}", exc_info=True)
+            logger.error(f"❌ Failed to log model {model_name}: {e}")
             raise
 
     def log_mlflow_artifact(
@@ -484,7 +487,7 @@ class MLFlowTracker:
                 logger.debug(f"Logged artifact: {tmp_path.name}{dest_info}")
 
         except MLFlowError as e:
-            logger.error(f"Failed to log artifact {filename}: {e}", exc_info=True)
+            logger.error(f"Failed to log artifact {filename}: {e}")
             raise
 
     def log_artifact_from_path(
@@ -526,9 +529,204 @@ class MLFlowTracker:
                 logger.debug(f"Deleted contents of directory: {local_path}")
 
         except MLFlowError as e:
-            logger.error(
-                f"Failed to log artifact from path {local_path}: {e}", exc_info=True
-            )
+            logger.error(f"Failed to log artifact from path {local_path}: {e}")
+            raise
+
+    def get_artifact_uri(self, artifact_path: str) -> str:
+        """Get the URI of a logged artifact."""
+        return mlflow.get_artifact_uri(artifact_path)  # type: ignore
+
+    def load_model_artifact(
+        self,
+        run_id: str,
+        model_name: str | ModelType,
+        artifact_subpath: str = "models",
+    ) -> dict[str, Any]:
+        """
+        Load a model artifact and its metadata from MLflow.
+
+        Parameters
+        ----------
+        run_id : str
+            MLflow run ID containing the model.
+        model_name : str | ModelType
+            Name of the model (e.g., "xgboost", "lightgbm", "random_forest").
+        artifact_subpath : str, default="models"
+            Subdirectory path where model artifacts are stored.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary containing:
+            - "model": The loaded model object
+            - "metadata": Model metadata (dict)
+            - "input_example": Input example data (list of dicts), if available
+            - "model_uri": URI to the model artifact directory
+
+        """
+        client = mlflow.tracking.MlflowClient()  # type: ignore
+        model_name = str(model_name)
+
+        try:
+            # Construct artifact path
+            artifact_path: str = f"{artifact_subpath}/{model_name}"
+
+            # Download all artifacts to a temporary directory
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_path = Path(tmpdir)
+                local_path = client.download_artifacts(
+                    run_id, artifact_path, dst_path=str(tmpdir_path)
+                )
+                local_path = Path(local_path)
+
+                # Find model file (look for .pkl, .json, .txt)
+                model_files = list(local_path.glob("*_model.*"))
+                if not model_files:
+                    raise FileNotFoundError(f"No model file found in {local_path}")
+
+                model_file = model_files[0]
+                model_ext = model_file.suffix[1:]
+                logger.info(
+                    f"Detected model file: {model_file.name!r} with extension {model_ext!r}"
+                )
+
+                # Load model based on extension
+                model: Any
+                if model_ext == ArtifactsType.PICKLE.value:
+                    model = joblib.load(model_file)
+                    logger.debug(f"Loaded pickle model from {model_file.name}")
+
+                elif model_ext == ArtifactsType.JSON.value:
+                    model = xgb.Booster()
+                    model.load_model(str(model_file))
+                    logger.debug(f"Loaded XGBoost model from {model_file.name}")
+
+                elif model_ext == ArtifactsType.TXT.value:
+                    model = lgb.Booster(model_file=str(model_file))
+                    logger.debug(f"Loaded LightGBM model from {model_file.name}")
+
+                else:
+                    raise ValueError(f"Unsupported model file extension: {model_ext}")
+
+                # Load metadata
+                metadata_files = list(local_path.glob("*_metadata.yaml"))
+                metadata: dict[str, Any] = {}
+                if metadata_files:
+                    with open(metadata_files[0]) as f:
+                        metadata = yaml.safe_load(f)
+                    logger.debug(f"Loaded metadata from {metadata_files[0].name}")
+
+                # Load input example
+                input_example_files = list(local_path.glob("*_input_example.json"))
+                input_example: list[dict[str, Any]] | None = None
+                if input_example_files:
+                    with open(input_example_files[0]) as f:
+                        input_example = json.load(f)
+                    logger.debug(
+                        f"Loaded input example from {input_example_files[0].name}"
+                    )
+
+                # Construct model URI
+                model_uri = f"runs:/{run_id}/{artifact_path}"
+
+                logger.info(
+                    f"✅ Successfully loaded {model_name} model from run {run_id}"
+                )
+
+                return {
+                    "model": model,
+                    "metadata": metadata,
+                    "input_example": input_example,
+                    "model_uri": model_uri,
+                    "run_id": run_id,
+                    "model_name": model_name,
+                }
+
+        except Exception as e:
+            logger.error(f"❌ Failed to load model artifact: {e}")
+            raise
+
+    def load_json_artifact(
+        self,
+        run_id: str,
+        artifact_path: str,
+    ) -> dict[str, Any]:
+        """
+        Load a JSON artifact from MLflow.
+
+        Parameters
+        ----------
+        run_id : str
+            MLflow run ID containing the artifact.
+        artifact_path : str
+            Path to the JSON artifact (e.g., "models/xgboost/feat_imp_xgboost.json").
+
+        Returns
+        -------
+        dict[str, Any]
+            Loaded JSON data.
+
+        Examples
+        --------
+        >>> tracker = MLFlowTracker(tracking_uri="http://localhost:5001", experiment_name="my_exp")
+        >>> feat_imp = tracker.load_json_artifact(
+        ...     run_id="abc123",
+        ...     artifact_path="models/xgboost/feat_imp_xgboost.json"
+        ... )
+
+        """
+        client = mlflow.tracking.MlflowClient()  # type: ignore
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                local_path = client.download_artifacts(
+                    run_id, artifact_path, dst_path=tmpdir
+                )
+                with open(local_path) as f:
+                    data = json.load(f)
+
+                logger.debug(f"Loaded JSON artifact: {artifact_path}")
+                return data
+
+        except Exception as e:
+            logger.error(f"Failed to load JSON artifact {artifact_path}: {e}")
+            raise
+
+    def list_artifacts(self, run_id: str, path: str | None = None) -> list[str]:
+        """
+        List all artifacts for a given run.
+
+        Parameters
+        ----------
+        run_id : str
+            MLflow run ID.
+        path : str, optional
+            Artifact subdirectory to list. If None, lists all artifacts.
+
+        Returns
+        -------
+        list[str]
+            List of artifact paths.
+
+        Examples
+        --------
+        >>> tracker = MLFlowTracker(tracking_uri="http://localhost:5001", experiment_name="my_exp")
+        >>> artifacts = tracker.list_artifacts(run_id="abc123")
+        >>> print(artifacts)
+        ['models/xgboost/xgboost_model.json', 'models/xgboost/metadata.yaml', ...]
+
+        """
+        client = mlflow.tracking.MlflowClient()  # type: ignore
+
+        try:
+            artifacts = client.list_artifacts(run_id, path)
+            artifact_paths = [artifact.path for artifact in artifacts]
+
+            logger.debug(f"Found {len(artifact_paths)} artifacts for run {run_id}")
+            return artifact_paths
+
+        except Exception as e:
+            logger.error(f"Failed to list artifacts for run {run_id}: {e}")
             raise
 
     def end_run(self, status: str = "FINISHED") -> None:

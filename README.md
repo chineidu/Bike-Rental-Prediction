@@ -51,7 +51,7 @@ Develop a real-time machine learning model that forecasts hourly bike rental dem
 
 ## Key Deliverables
 
-- Develop and deploy a machine learning model to forecast hourly bike rental demand across the city.
+- Develop and deploy a machine learning model to forecast hourly bike rental demand across the city. [✅]
 - Implement a real-time dynamic pricing algorithm that adjusts prices based on forecasted demand.
 - Use experiment tracking to log model performance.
 - Collect and process real-time data streams to ensure the model has access to the latest rental data.
