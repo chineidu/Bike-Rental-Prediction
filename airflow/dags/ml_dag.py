@@ -183,6 +183,7 @@ def ml_pipeline_dag() -> None:
         import polars as pl
 
         from src.ml.trainer import ModelTrainer
+        from src.schemas.output_schema import TrainingResult
 
         tune_models: bool = params["tune_models"] if params else False
         serializable_results: list[dict[str, Any]] = []
@@ -190,19 +191,18 @@ def ml_pipeline_dag() -> None:
         data_path: str = result["features_path"]
         features_df: pl.DataFrame = pl.read_parquet(data_path)
         trainer = ModelTrainer(features_df)
-        run_id: str = ""
 
         if not tune_models:
             print("🚨 Training models without hyperparameter tuning ...")
             try:
-                training_results: list[dict[str, Any]] = trainer.train_all_models()
+                training_results: list[TrainingResult] = trainer.train_all_models()
 
                 for row in training_results:
                     serializable_results.append(  # noqa: PERF401
                         {
-                            "run_id": row.get("run_id", run_id),
-                            "model_name": row.get("model_name", ""),
-                            "metrics": row.get("metrics", {}),
+                            "run_id": row.run_id,
+                            "model_name": row.model_name,
+                            "metrics": row.metrics,
                         }
                     )
 
@@ -227,6 +227,7 @@ def ml_pipeline_dag() -> None:
         import polars as pl
 
         from src.ml.trainer import ModelTrainer
+        from src.schemas.output_schema import HyperparameterTuningResult
 
         data_path: str = result["features_path"]
         tune_models: bool = params["tune_models"] if params else False
@@ -236,12 +237,14 @@ def ml_pipeline_dag() -> None:
         if tune_models:
             print("🚨 Performing hyperparameter tuning ...")
             try:
-                hyperparams_results: list[dict[str, Any]] = (
+                hyperparams_results: list[HyperparameterTuningResult] = (
                     trainer.hyperparameter_tuning_all_models()
                 )
 
                 return {
-                    "hyperparameter_tuning_results": hyperparams_results,
+                    "hyperparameter_tuning_results": [
+                        row.model_dump() for row in hyperparams_results
+                    ],
                     "datetime": get_time_now(),
                 }
 
@@ -264,6 +267,44 @@ def ml_pipeline_dag() -> None:
         print("🚨 Hyperparameter tuning disabled - skipping tuning task")
         return "model_training_task"
 
+    @task(multiple_outputs=True, retries=2, trigger_rule="none_failed_min_one_success")
+    def register_best_model(result: dict[str, Any]) -> dict[str, Any]:
+        """Register the best model from the experiment.
+
+        "none_failed_min_one_success": Run this task if at least one upstream task succeeded
+        "all_success": Run only if ALL upstream tasks succeed (default)
+        """
+        import polars as pl
+
+        from src.config import app_config
+        from src.exp_tracking.model_loader import load_best_model
+        from src.ml.trainer import ModelTrainer
+
+        data_path: str = result["features_path"]
+        features_df: pl.DataFrame = pl.read_parquet(data_path)
+        trainer = ModelTrainer(features_df)
+
+        try:
+            # Load the best model from the experiment
+            best_model_artifacts: dict[str, Any] | None = load_best_model(
+                experiment_name=app_config.experiment_config.experiment_name
+            )
+            if best_model_artifacts:
+                trainer.mlflow_tracker.register_model(
+                    run_id=best_model_artifacts["run_id"],
+                    model=best_model_artifacts["model"],
+                    model_name=best_model_artifacts["model_name"],
+                    input_example=trainer.input_example,
+                )
+            return {
+                "status": "✅ Model registered successfully",
+                "datetime": get_time_now(),
+            }
+
+        except Exception:
+            print(traceback.format_exc())
+            raise
+
     _ = BashOperator(
         task_id="bash_task",
         bash_command="""
@@ -279,6 +320,7 @@ def ml_pipeline_dag() -> None:
     result_features = features_generation_task(result_load)
     result_train = model_training_task(result_features)
     result_tune = hyperparameter_tuning_task(result_features)
+    result_register = register_best_model(result_features)
 
     # Branching logic
     tuning_decision = decide_tuning_branch()
@@ -286,7 +328,7 @@ def ml_pipeline_dag() -> None:
     # Set task dependencies
     result_init_artifacts >> [result_load, result_validate]
     result_validate >> result_features >> tuning_decision
-    tuning_decision >> [result_tune, result_train]
+    tuning_decision >> [result_tune, result_train] >> result_register
 
 
 bike_rental_ml_dag = ml_pipeline_dag()

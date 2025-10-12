@@ -6,7 +6,7 @@ import mlflow
 
 from src import create_logger
 from src.exceptions import MLFlowError
-from src.exp_tracking.mlflow import MLFlowTracker
+from src.exp_tracking.mlflow_tracker import MLFlowTracker
 from src.schemas.types import ModelType
 
 logger = create_logger("model_loader")
@@ -43,9 +43,7 @@ def load_model_from_run(
 
     """
     try:
-        model_name = (
-            str(model_name) if isinstance(model_name, ModelType) else model_name
-        )
+        model_name = str(model_name)
         tracker = MLFlowTracker(
             tracking_uri=tracking_uri, experiment_name=experiment_name
         )
@@ -84,18 +82,20 @@ def get_best_run(
 
         # Get experiment
         experiment = client.get_experiment_by_name(experiment_name)
+
         if experiment is None:
-            raise ValueError(f"Experiment '{experiment_name}' not found")
+            raise ValueError(f"Experiment {experiment_name!r} not found")
 
         # Search for runs sorted by metric
         runs = client.search_runs(
             experiment_ids=[experiment.experiment_id],
-            order_by=[f"metrics.{metric} ASC"],  # ASC for metrics where lower is better
+            # ASC for metrics where lower is better
+            order_by=[f"metrics.{metric} ASC"],
             max_results=1,
         )
 
         if not runs:
-            raise ValueError(f"No runs found in experiment '{experiment_name}'")
+            raise ValueError(f"No runs found in experiment {experiment_name!r}")
 
         best_run = runs[0]
         best_run_id = best_run.info.run_id

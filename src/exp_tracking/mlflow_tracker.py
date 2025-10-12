@@ -11,9 +11,11 @@ import joblib
 import lightgbm as lgb
 import mlflow
 import narwhals as nw
+import pandas as pd
 import polars as pl
 import xgboost as xgb
 import yaml  # type: ignore
+from mlflow.models.model import ModelInfo
 from narwhals.typing import IntoDataFrameT
 
 from src import create_logger
@@ -727,6 +729,63 @@ class MLFlowTracker:
 
         except Exception as e:
             logger.error(f"Failed to list artifacts for run {run_id}: {e}")
+            raise
+
+    def register_model(
+        self,
+        run_id: str,
+        model: Any,
+        model_name: str,
+        input_example: IntoDataFrameT | None,
+    ) -> None:
+        """Register a model with MLflow."""
+        if input_example is not None:
+            try:
+                input_example_df: pd.DataFrame | None = (
+                    nw.from_native(input_example).to_pandas().head(2)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to convert input example: {e}")
+
+        input_example_df = (
+            input_example_df.drop(columns=["target"])
+            if isinstance(input_example_df, pd.DataFrame)
+            else None
+        )
+
+        try:
+            with mlflow.start_run(run_id=run_id):  # type: ignore
+                # Determine model type
+                if "XGBOOST" in model_name:
+                    model_info: ModelInfo = mlflow.xgboost.log_model(
+                        xgb_model=model,
+                        artifact_path="registered_model",
+                        registered_model_name=f"{model_name}_best",
+                        input_example=input_example_df,
+                    )
+                elif "LIGHTGBM" in model_name:
+                    model_info = mlflow.lightgbm.log_model(
+                        lgb_model=model,
+                        artifact_path="registered_model",
+                        registered_model_name=f"{model_name}_best",
+                        input_example=input_example_df,
+                    )
+                elif "RANDOM_FOREST" in model_name:
+                    model_info = mlflow.sklearn.log_model(
+                        sk_model=model,
+                        artifact_path="registered_model",
+                        registered_model_name=f"{model_name}_best",
+                        input_example=input_example_df,
+                    )
+                else:
+                    raise ValueError(f"Unsupported model type: {model_name}")
+                logger.info(
+                    f"✅ Registered model: {model_info.model_uri} | version: {model_info.registered_model_version}"
+                )
+                return
+
+        except Exception as e:
+            logger.error(f"❌ Failed to register model: {e}")
             raise
 
     def end_run(self, status: str = "FINISHED") -> None:

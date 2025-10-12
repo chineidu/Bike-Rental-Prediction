@@ -13,8 +13,8 @@ from sklearn.model_selection import TimeSeriesSplit
 from src import PACKAGE_PATH, create_logger
 from src.config import app_config
 from src.exceptions import HyperparameterTuningError, TrainingError
-from src.exp_tracking.mlflow import ArtifactsType, MLFlowTracker
 from src.exp_tracking.mlflow_s3_utils import MLflowS3Manager
+from src.exp_tracking.mlflow_tracker import ArtifactsType, MLFlowTracker
 from src.exp_tracking.s3_verification import (
     log_s3_verification_results,
     verify_s3_artifacts,
@@ -734,23 +734,8 @@ class ModelTrainer:
             )
             best_trial = study.best_trial
             best_params: dict[str, Any] = best_trial.params
-            rmse: float = best_trial.user_attrs.get("RMSE", 0.0)
-            mae: float = best_trial.user_attrs.get("MAE", 0.0)
-            mape: float = best_trial.user_attrs.get("MAPE", 0.0)
-            adj_r2: float | None = best_trial.user_attrs.get("Adjusted_R2", None)
             print(f"Best trial: {best_trial.number} | Value: {best_trial.value}")
 
-            # Log best parameters and metrics to MLflow
-            self.mlflow_tracker.log_params(best_params)
-            self.mlflow_tracker.log_metrics(
-                {
-                    "best_rmse": best_trial.value,
-                    "mean_rmse": rmse,
-                    "mean_mae": mae,
-                    "mean_mape": mape,
-                    "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
-                }
-            )
             # Log tags
             tags: dict[str, Any] = (
                 app_config.experiment_config.experiment_tags.model_dump()
@@ -760,29 +745,32 @@ class ModelTrainer:
             self.mlflow_tracker.set_tags(tags=tags)
 
             # Build model
-            tscv = TimeSeriesSplit(
-                n_splits=self.n_splits,
-                test_size=self.cv_test_size,
-                gap=0,
-            )
-            rf_model = RandomForestRegressor(
-                **best_params, random_state=self.random_seed
-            )
-            data_dict: dict[str, Any] = self.data_dict
-            x_train, y_train = data_dict["x_train"], data_dict["y_train"]
-            cv_results: dict[str, Any] = cross_validate_sklearn_model(
-                tscv, x_train, y_train, rf_model
-            )
-            trained_model: RandomForestRegressor = cv_results.get("model")  # type: ignore
+            rf_result: TrainingResult = self._train_random_forest(best_params)
+            rf_model: RandomForestRegressor = rf_result.trained_model
+            rmse: float | None = rf_result.metrics.get("RMSE", None)  # type: ignore
+            mae: float | None = rf_result.metrics.get("MAE", None)  # type: ignore
+            mape: float | None = rf_result.metrics.get("MAPE", None)  # type: ignore
+            adj_r2: float | None = rf_result.metrics.get("Adjusted_R2", None)  # type: ignore
 
             # Feature importance
-            column_names = data_dict["columns"]
-            weights_ = trained_model.feature_importances_
+            column_names: list[str] = self.data_dict["columns"]
+            weights_ = rf_model.feature_importances_
 
             feat_importance: dict[str, Any]
             (_, feat_importance) = get_model_feature_importance(
                 model_name=model_name, features=column_names, weights=weights_, n=20
             )
+            metrics: dict[str, float | None] = {
+                "best_rmse": best_trial.value,
+                "mean_rmse": rmse,
+                "mean_mae": mae,
+                "mean_mape": mape,
+                "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
+            }
+
+            # Log best parameters and metrics to MLflow
+            self.mlflow_tracker.log_params(best_params)
+            self.mlflow_tracker.log_metrics(metrics)
             self.mlflow_tracker.log_mlflow_artifact(
                 object=feat_importance,
                 object_type=ArtifactsType.JSON,
@@ -790,7 +778,7 @@ class ModelTrainer:
                 artifact_dest="models/",
             )
             self.mlflow_tracker.log_model(
-                trained_model,
+                rf_model,
                 model_name=model_name,
                 input_example=self.input_example,
             )
@@ -802,6 +790,7 @@ class ModelTrainer:
             run_id=run_id,
             model_name=model_name,
             best_params=best_params,
+            metrics=metrics,
             model_uri=model_uri,
         )
 
@@ -835,15 +824,15 @@ class ModelTrainer:
             self.mlflow_tracker.set_tags(tags=tags)
 
             # Build model
-            xgb_result: dict[str, Any] = self._train_xgboost(best_params)
-            xgb_model = xgb_result.get("model")
-            rmse: float | None = xgb_result["metrics"].get("RMSE", None)  # type: ignore
-            mae: float | None = xgb_result["metrics"].get("MAE", None)  # type: ignore
-            mape: float | None = xgb_result["metrics"].get("MAPE", None)  # type: ignore
-            adj_r2: float | None = xgb_result["metrics"].get("Adjusted_R2", None)  # type: ignore
+            xgb_result: TrainingResult = self._train_xgboost(best_params)
+            xgb_model = xgb_result.trained_model
+            rmse: float | None = xgb_result.metrics.get("RMSE", None)  # type: ignore
+            mae: float | None = xgb_result.metrics.get("MAE", None)  # type: ignore
+            mape: float | None = xgb_result.metrics.get("MAPE", None)  # type: ignore
+            adj_r2: float | None = xgb_result.metrics.get("Adjusted_R2", None)  # type: ignore
 
             # Feature importance
-            column_names = self.data_dict["columns"]
+            column_names: list[str] = self.data_dict["columns"]
             weights_dict: dict[str, float] = get_feature_importance_from_booster(
                 xgb_model,
                 column_names,
@@ -853,17 +842,17 @@ class ModelTrainer:
             (_, feat_importance) = get_model_feature_importance(
                 model_name=model_name, features=column_names, weights=weights_, n=20
             )
+            metrics: dict[str, float | None] = {
+                "best_rmse": best_trial.value,
+                "mean_rmse": rmse,
+                "mean_mae": mae,
+                "mean_mape": mape,
+                "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
+            }
+
             # Log best parameters and metrics to MLflow
             self.mlflow_tracker.log_params(best_params)
-            self.mlflow_tracker.log_metrics(
-                {
-                    "best_rmse": best_trial.value,
-                    "mean_rmse": rmse,
-                    "mean_mae": mae,
-                    "mean_mape": mape,
-                    "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
-                }
-            )
+            self.mlflow_tracker.log_metrics(metrics)
             self.mlflow_tracker.log_mlflow_artifact(
                 object=feat_importance,
                 object_type=ArtifactsType.JSON,
@@ -884,6 +873,7 @@ class ModelTrainer:
             run_id=run_id,
             model_name=model_name,
             best_params=best_params,
+            metrics=metrics,
             model_uri=model_uri,
         )
 
@@ -917,15 +907,15 @@ class ModelTrainer:
             self.mlflow_tracker.set_tags(tags=tags)
 
             # Build final model with best params
-            lgb_result: dict[str, Any] = self._train_lightgbm(best_params)
-            lgb_model = lgb_result.get("model")
-            rmse: float | None = lgb_result["metrics"].get("RMSE", None)  # type: ignore
-            mae: float | None = lgb_result["metrics"].get("MAE", None)  # type: ignore
-            mape: float | None = lgb_result["metrics"].get("MAPE", None)  # type: ignore
-            adj_r2: float | None = lgb_result["metrics"].get("Adjusted_R2", None)  # type: ignore
+            lgb_result: TrainingResult = self._train_lightgbm(best_params)
+            lgb_model = lgb_result.trained_model
+            rmse: float | None = lgb_result.metrics.get("RMSE", None)  # type: ignore
+            mae: float | None = lgb_result.metrics.get("MAE", None)  # type: ignore
+            mape: float | None = lgb_result.metrics.get("MAPE", None)  # type: ignore
+            adj_r2: float | None = lgb_result.metrics.get("Adjusted_R2", None)  # type: ignore
 
             # Feature importance
-            column_names = self.data_dict["columns"]
+            column_names: list[str] = self.data_dict["columns"]
             feat_imp_df: pl.DataFrame = get_lightgbm_feature_importance(
                 lgb_model, column_names
             )
@@ -934,17 +924,17 @@ class ModelTrainer:
             (_, feat_importance) = get_model_feature_importance(
                 model_name=model_name, features=column_names, weights=weights_, n=20
             )
+            metrics: dict[str, float | None] = {
+                "best_rmse": best_trial.value,
+                "mean_rmse": rmse,
+                "mean_mae": mae,
+                "mean_mape": mape,
+                "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
+            }
+
             # Log best parameters and metrics to MLflow
             self.mlflow_tracker.log_params(best_params)
-            self.mlflow_tracker.log_metrics(
-                {
-                    "best_rmse": best_trial.value,
-                    "mean_rmse": rmse,
-                    "mean_mae": mae,
-                    "mean_mape": mape,
-                    "mean_adjusted_r2": adj_r2 if adj_r2 is not None else None,
-                }
-            )
+            self.mlflow_tracker.log_metrics(metrics)
             self.mlflow_tracker.log_mlflow_artifact(
                 object=feat_importance,
                 object_type=ArtifactsType.JSON,
@@ -965,6 +955,7 @@ class ModelTrainer:
             run_id=run_id,
             model_name=model_name,
             best_params=best_params,
+            metrics=metrics,
             model_uri=model_uri,
         )
 
@@ -973,7 +964,7 @@ class ModelTrainer:
         results: list[HyperparameterTuningResult] = []
 
         try:
-            logger.info("🚨 Starting hyperparameter tuning for all models...")
+            logger.info("▶▶▶ Starting hyperparameter tuning for all models...")
             # ================================
             # ========= Random Forest ========
             # ================================
@@ -1021,7 +1012,7 @@ class ModelTrainer:
             _results = results  # type: ignore
 
         try:
-            results_df = create_metrics_df(_results)
+            results_df = create_metrics_df(_results)  # type: ignore
             create_grouped_metrics_barchart(
                 results_df, save_path=f"model_metrics_comparison_{date_str}.html"
             )

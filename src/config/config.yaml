@@ -78,7 +78,7 @@ config:
       min_samples_leaf: [1, 5]
       max_features: [null, "sqrt", "log2"]
       bootstrap: [true, false]
-      n_trials: 5
+      n_trials: 2
     # === Hyperparameter search space for XGBoost ===
     xgboost_optuna_config:
       objective: "reg:squarederror"

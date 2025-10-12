@@ -105,15 +105,18 @@ class HyperparameterTuningResult(BaseSchema):
         MLflow run ID for the hyperparameter tuning experiment.
     model_name : ModelType
         Type of model that was tuned (xgboost, lightgbm, random_forest).
-    best_params : dict[str, float | str | int]
+    best_params : dict[str, Any]
         Best hyperparameters found during optimization.
+    metrics : dict[str, float | None]
+        Evaluation metrics (best_rmse, mean_rmse, mean_mae, mean_mape, mean_adjusted_r2).
     model_uri : str
         MLflow URI to the best model artifact.
     """
 
     run_id: str
     model_name: ModelType
-    best_params: dict[str, float | str | int] = Field(default_factory=dict)
+    best_params: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, float | None] = Field(default_factory=dict)
     model_uri: str
 
 
