@@ -1,4 +1,8 @@
+from typing import Any
+
 from pydantic import Field
+
+from src.schemas.types import ModelType
 
 from .input_schema import BaseSchema, Float
 
@@ -62,6 +66,58 @@ class DataValidatorSchema(BaseSchema):
     other_info: OtherInfo
 
 
+class TrainingResult(BaseSchema):
+    """
+    Result of model training.
+
+    Attributes
+    ----------
+    run_id : str | None
+        MLflow run ID for the training experiment.
+    model_name : ModelType | None
+        Type of model trained (xgboost, lightgbm, random_forest).
+    trained_model : Any
+        Trained model object. Can be:
+        - sklearn models (RandomForestRegressor, etc.)
+        - XGBoost models (xgb.XGBRegressor, xgb.Booster)
+        - LightGBM models (lgb.LGBMRegressor, lgb.Booster)
+        - Any other trained ML model
+    metrics : dict[str, Any]
+        Evaluation metrics (RMSE, MAE, MAPE, R2, etc.).
+    predictions : list[float] | None
+        List of predictions on the test set.
+    """
+
+    run_id: str | None = Field(default=None)
+    model_name: ModelType | None = Field(default=None)
+    trained_model: Any = Field(alias="model")
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    predictions: list[float] | None = Field(default=None)
+
+
+class HyperparameterTuningResult(BaseSchema):
+    """
+    Result of hyperparameter tuning with Optuna.
+
+    Attributes
+    ----------
+    run_id : str
+        MLflow run ID for the hyperparameter tuning experiment.
+    model_name : ModelType
+        Type of model that was tuned (xgboost, lightgbm, random_forest).
+    best_params : dict[str, float | str | int]
+        Best hyperparameters found during optimization.
+    model_uri : str
+        MLflow URI to the best model artifact.
+    """
+
+    run_id: str
+    model_name: ModelType
+    best_params: dict[str, float | str | int] = Field(default_factory=dict)
+    model_uri: str
+
+
+# ============ API SCHEMAS ============ #
 class HealthCheck(BaseSchema):
     """
     Health check response model.

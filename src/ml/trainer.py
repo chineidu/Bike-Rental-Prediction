@@ -30,6 +30,7 @@ from src.ml.utils import (
     split_into_train_val_test_sets,
 )
 from src.ml.visualization import create_grouped_metrics_barchart
+from src.schemas import HyperparameterTuningResult, TrainingResult
 from src.schemas.types import ModelType
 from src.utilities.service_discovery import get_mlflow_endpoint
 
@@ -84,7 +85,7 @@ class ModelTrainer:
         logger.info("Data preparation complete.")
         return data_dict
 
-    def _train_random_forest(self, params: dict[str, Any]) -> dict[str, Any]:
+    def _train_random_forest(self, params: dict[str, Any]) -> TrainingResult:
         """Train a Random Forest model with time series cross-validation."""
 
         tscv = TimeSeriesSplit(
@@ -104,9 +105,9 @@ class ModelTrainer:
         )
         cv_results: dict[str, Any] = cross_validate_sklearn_model(tscv, X, y, model)
 
-        return cv_results
+        return TrainingResult(**cv_results)
 
-    def _train_xgboost(self, params: dict[str, Any]) -> dict[str, Any]:
+    def _train_xgboost(self, params: dict[str, Any]) -> TrainingResult:
         """Train an XGBoost model with time series cross-validation."""
         data_dict: dict[str, Any] = self.data_dict
 
@@ -134,17 +135,9 @@ class ModelTrainer:
             y_val, preds, n_features=x_train.shape[1]
         )
 
-        return {
-            "model": model,
-            "metrics": {
-                "RMSE": metrics.get("RMSE"),
-                "MAE": metrics.get("MAE"),
-                "MAPE": metrics.get("MAPE"),
-                "Adjusted_R2": metrics.get("Adjusted_R2"),
-            },
-        }
+        return TrainingResult(trained_model=model, metrics=metrics)  # type: ignore
 
-    def _train_lightgbm(self, params: dict[str, Any]) -> dict[str, Any]:
+    def _train_lightgbm(self, params: dict[str, Any]) -> TrainingResult:
         """Train a LightGBM model."""
         data_dict: dict[str, Any] = self.data_dict
 
@@ -176,20 +169,12 @@ class ModelTrainer:
             n_features=x_train.shape[1],
         )
 
-        return {
-            "model": model,
-            "metrics": {
-                "RMSE": metrics.get("RMSE"),
-                "MAE": metrics.get("MAE"),
-                "MAPE": metrics.get("MAPE"),
-                "Adjusted_R2": metrics.get("Adjusted_R2"),
-            },
-        }
+        return TrainingResult(trained_model=model, metrics=metrics)  # type: ignore
 
-    def train_all_models(self) -> list[dict[str, Any]]:
+    def train_all_models(self) -> list[TrainingResult]:
         """Train models and log results to MLflow."""
         column_names = self.data_dict["columns"]
-        results: list[dict[str, Any]] = []
+        results: list[TrainingResult] = []
         data_dict: dict[str, Any] = self.data_dict
 
         logger.info("🚀 Training with default hyperparameters")
@@ -211,13 +196,13 @@ class ModelTrainer:
                 params_rf: dict[str, Any] = (
                     app_config.model_training_config.random_forest_config.model_dump()
                 )
-                rf_reg_results = self._train_random_forest(params=params_rf)
-                y_pred: np.ndarray = rf_reg_results["model"].predict(
-                    data_dict["x_test"]
+                rf_reg_results: TrainingResult = self._train_random_forest(
+                    params=params_rf
                 )
+                rf_model: RandomForestRegressor = rf_reg_results.trained_model
+                y_pred: np.ndarray = rf_model.predict(data_dict["x_test"])
 
                 # Feature importance
-                rf_model: RandomForestRegressor = rf_reg_results.get("model")
                 weights_ = rf_model.feature_importances_
                 # model_name: str = str(ModelType.RANDOM_FOREST)
                 model_name = ModelType.RANDOM_FOREST
@@ -238,18 +223,18 @@ class ModelTrainer:
                     input_example=self.input_example,
                     save_format=ArtifactsType.PICKLE,
                 )
-                metrics: dict[str, float | None] = self._format_metrics(  # type: ignore
-                    rf_reg_results.get("metrics", {}), prefix="rf"
+                metrics_fmtd: dict[str, float | None] = self._format_metrics(  # type: ignore
+                    rf_reg_results.metrics, prefix="rf"
                 )
-                self.mlflow_tracker.log_metrics(metrics)  # type: ignore
+                self.mlflow_tracker.log_metrics(metrics_fmtd)  # type: ignore
                 results.append(
-                    {
-                        "run_id": run_id,
-                        "model_name": model_name,
-                        "model": rf_model,
-                        "metrics": rf_reg_results.get("metrics"),
-                        "predictions": y_pred,
-                    }
+                    TrainingResult(
+                        run_id=run_id,
+                        model_name=model_name,
+                        trained_model=rf_model,
+                        metrics=rf_reg_results.metrics,
+                        predictions=y_pred,
+                    )
                 )
                 logger.info("🚀 Random Forest training completed successfully.")
 
@@ -260,13 +245,13 @@ class ModelTrainer:
                 params_xgb: dict[str, Any] = (
                     app_config.model_training_config.xgboost_config.model_dump()
                 )
-                xgb_results: dict[str, Any] = self._train_xgboost(params=params_xgb)
-                y_pred = xgb_results["model"].predict(
+                xgb_results: TrainingResult = self._train_xgboost(params=params_xgb)
+                xgb_model: xgb.Booster = xgb_results.trained_model
+                y_pred = xgb_model.predict(
                     xgb.DMatrix(data_dict["x_test"], enable_categorical=True)
                 )
 
                 # Feature importance
-                xgb_model: xgb.Booster = xgb_results.get("model")
                 model_name = ModelType.XGBOOST
 
                 weights_dict: dict[str, float] = get_feature_importance_from_booster(
@@ -291,19 +276,19 @@ class ModelTrainer:
                     input_example=self.input_example,
                     save_format=ArtifactsType.JSON,
                 )
-                metrics: dict[str, float | None] = self._format_metrics(  # type: ignore
-                    xgb_results.get("metrics", {}), prefix="xgb"
+                metrics_fmtd: dict[str, float | None] = self._format_metrics(  # type: ignore
+                    xgb_results.metrics, prefix="xgb"
                 )
-                self.mlflow_tracker.log_metrics(metrics)  # type: ignore
+                self.mlflow_tracker.log_metrics(metrics_fmtd)  # type: ignore
 
                 results.append(
-                    {
-                        "run_id": run_id,
-                        "model_name": model_name,
-                        "model": xgb_model,
-                        "metrics": xgb_results.get("metrics"),
-                        "predictions": y_pred,
-                    }
+                    TrainingResult(
+                        run_id=run_id,
+                        model_name=model_name,
+                        trained_model=xgb_model,
+                        metrics=xgb_results.metrics,
+                        predictions=y_pred,
+                    )
                 )
                 logger.info("🚀 XGBoost training completed successfully.")
 
@@ -314,11 +299,11 @@ class ModelTrainer:
                 params_lgb: dict[str, Any] = (
                     app_config.model_training_config.lightgbm_config.model_dump()
                 )
-                lgb_results: dict[str, Any] = self._train_lightgbm(params=params_lgb)
-                y_pred = lgb_results["model"].predict(data_dict["x_test"])
+                lgb_results: TrainingResult = self._train_lightgbm(params=params_lgb)
+                lgb_model: lgb.Booster = lgb_results.trained_model
+                y_pred = lgb_model.predict(data_dict["x_test"])
 
                 # Feature importance
-                lgb_model: lgb.Booster = lgb_results.get("model")
                 model_name = ModelType.LIGHTGBM
                 feat_imp_df: pl.DataFrame = get_lightgbm_feature_importance(
                     lgb_model, column_names
@@ -340,22 +325,23 @@ class ModelTrainer:
                     input_example=self.input_example,
                     save_format=ArtifactsType.TXT,
                 )
-                metrics = self._format_metrics(  # type: ignore
-                    lgb_results.get("metrics", {}), prefix="lgb"
+                metrics_fmtd = self._format_metrics(  # type: ignore
+                    lgb_results.metrics, prefix="lgb"
                 )
-                self.mlflow_tracker.log_metrics(metrics)  # type: ignore
+                self.mlflow_tracker.log_metrics(metrics_fmtd)  # type: ignore
 
                 results.append(
-                    {
-                        "run_id": run_id,
-                        "model_name": model_name,
-                        "model": lgb_model,
-                        "metrics": lgb_results.get("metrics"),
-                        "predictions": y_pred,
-                    }
+                    TrainingResult(
+                        run_id=run_id,
+                        model_name=model_name,
+                        trained_model=lgb_model,
+                        metrics=lgb_results.metrics,
+                        predictions=y_pred,
+                    )
                 )
                 logger.info("🚀 LightGBM training completed successfully.")
 
+                # === End of all models training ===
                 logger.info("✅ ALL models training completed successfully.")
                 test_df: pl.DataFrame = pl.DataFrame(
                     data_dict["x_test"], schema=column_names
@@ -395,7 +381,7 @@ class ModelTrainer:
             return results
 
         except TrainingError as e:
-            logger.error(f"❌ Error during model training: {e}")
+            logger.error(f"❌ Error during model training: {e}", exc_info=True)
             raise
 
     @staticmethod
@@ -726,7 +712,7 @@ class ModelTrainer:
 
         return mean_rmse  # type: ignore
 
-    def _hyperparameter_tuning_random_forest(self) -> dict[str, Any]:
+    def _hyperparameter_tuning_random_forest(self) -> HyperparameterTuningResult:
         """
         Perform hyperparameter tuning for a RandomForestRegressor using Optuna and log results to MLflow.
         """
@@ -812,14 +798,14 @@ class ModelTrainer:
                 artifact_path="models/"
             )
 
-        return {
-            "run_id": run_id,
-            "model_name": model_name,
-            "best_params": best_params,
-            "model_uri": model_uri,
-        }
+        return HyperparameterTuningResult(
+            run_id=run_id,
+            model_name=model_name,
+            best_params=best_params,
+            model_uri=model_uri,
+        )
 
-    def _hyperparameter_tuning_xgboost(self) -> dict[str, Any]:
+    def _hyperparameter_tuning_xgboost(self) -> HyperparameterTuningResult:
         optuna_config = app_config.optuna_config.xgboost_optuna_config
         n_trials: int = optuna_config.n_trials
 
@@ -894,14 +880,14 @@ class ModelTrainer:
                 artifact_path="models/"
             )
 
-        return {
-            "run_id": run_id,
-            "model_name": model_name,
-            "best_params": best_params,
-            "model_uri": model_uri,
-        }
+        return HyperparameterTuningResult(
+            run_id=run_id,
+            model_name=model_name,
+            best_params=best_params,
+            model_uri=model_uri,
+        )
 
-    def _hyperparameter_tuning_lightgbm(self) -> dict[str, Any]:
+    def _hyperparameter_tuning_lightgbm(self) -> HyperparameterTuningResult:
         optuna_config = app_config.optuna_config.lightgbm_optuna_config
         n_trials: int = optuna_config.n_trials
 
@@ -975,35 +961,41 @@ class ModelTrainer:
                 artifact_path="models/"
             )
 
-        return {
-            "run_id": run_id,
-            "model_name": model_name,
-            "best_params": best_params,
-            "model_uri": model_uri,
-        }
+        return HyperparameterTuningResult(
+            run_id=run_id,
+            model_name=model_name,
+            best_params=best_params,
+            model_uri=model_uri,
+        )
 
-    def hyperparameter_tuning_all_models(self) -> list[dict[str, Any]]:
+    def hyperparameter_tuning_all_models(self) -> list[HyperparameterTuningResult]:
         """Perform hyperparameter tuning for all models and log results to MLflow."""
-        results: list[dict[str, Any]] = []
+        results: list[HyperparameterTuningResult] = []
 
         try:
             logger.info("🚨 Starting hyperparameter tuning for all models...")
             # ================================
             # ========= Random Forest ========
             # ================================
-            rf_results: dict[str, Any] = self._hyperparameter_tuning_random_forest()
+            rf_results: HyperparameterTuningResult = (
+                self._hyperparameter_tuning_random_forest()
+            )
             results.append(rf_results)
 
             # ================================
             # ============ XGBoost ===========
             # ================================
-            xgb_results: dict[str, Any] = self._hyperparameter_tuning_xgboost()
+            xgb_results: HyperparameterTuningResult = (
+                self._hyperparameter_tuning_xgboost()
+            )
             results.append(xgb_results)
 
             # ================================
             # ============ LightGBM ==========
             # ================================
-            lgb_results: dict[str, Any] = self._hyperparameter_tuning_lightgbm()
+            lgb_results: HyperparameterTuningResult = (
+                self._hyperparameter_tuning_lightgbm()
+            )
             results.append(lgb_results)
 
             # All done
@@ -1016,12 +1008,20 @@ class ModelTrainer:
             raise
 
     def generate_and_log_visualizations(
-        self, results: list[dict[str, Any]], test_df: pl.DataFrame
+        self,
+        results: list[dict[str, Any]] | list[TrainingResult],
+        test_df: pl.DataFrame,
     ) -> None:
         """Generate and log model comparison visualizations to MLflow"""
         date_str: str = datetime.now().isoformat(timespec="seconds")
+        if isinstance(results[0], TrainingResult):
+            # Convert TrainingResult objects to dicts
+            _results: list[dict[str, Any]] = [r.model_dump() for r in results]  # type: ignore
+        else:
+            _results = results  # type: ignore
+
         try:
-            results_df = create_metrics_df(results)
+            results_df = create_metrics_df(_results)
             create_grouped_metrics_barchart(
                 results_df, save_path=f"model_metrics_comparison_{date_str}.html"
             )

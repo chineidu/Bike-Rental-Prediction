@@ -278,7 +278,7 @@ def cross_validate_sklearn_model(
         all_adj_r2.append(metrics.get("Adjusted_R2"))  # type: ignore
 
     return {
-        "model": model,
+        "trained_model": model,
         "metrics": {
             "RMSE": np.mean(all_rmse).round(2).item(),
             "MAE": np.mean(all_mae).round(2).item(),
