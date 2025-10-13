@@ -111,6 +111,8 @@ class HyperparameterTuningResult(BaseSchema):
         Evaluation metrics (best_rmse, mean_rmse, mean_mae, mean_mape, mean_adjusted_r2).
     model_uri : str
         MLflow URI to the best model artifact.
+    predictions : list[float] | None
+        List of predictions on the test set.
     """
 
     run_id: str
@@ -118,6 +120,7 @@ class HyperparameterTuningResult(BaseSchema):
     best_params: dict[str, Any] = Field(default_factory=dict)
     metrics: dict[str, float | None] = Field(default_factory=dict)
     model_uri: str
+    predictions: list[float] | None = Field(default=None)
 
 
 # ============ API SCHEMAS ============ #

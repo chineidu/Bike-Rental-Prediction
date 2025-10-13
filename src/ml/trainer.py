@@ -21,6 +21,7 @@ from src.exp_tracking.s3_verification import (
     verify_s3_artifacts,
 )
 from src.ml.utils import (
+    MetricsDict,
     combine_train_val,
     compute_metrics,
     create_metrics_df,
@@ -31,7 +32,7 @@ from src.ml.utils import (
 )
 from src.ml.visualization import create_grouped_metrics_barchart
 from src.schemas import HyperparameterTuningResult, TrainingResult
-from src.schemas.types import ModelType
+from src.schemas.types import DataDict, ModelType
 from src.utilities.service_discovery import get_mlflow_endpoint
 
 logger = create_logger(name="trainer")
@@ -39,17 +40,23 @@ logger = create_logger(name="trainer")
 
 class ModelTrainer:
     def __init__(
-        self, train_data: IntoDataFrameT, val_data: IntoDataFrameT, target_col: str
+        self,
+        train_data: IntoDataFrameT,
+        val_data: IntoDataFrameT,
+        test_data: IntoDataFrameT,
+        target_col: str,
     ) -> None:
         self.train_data: nw.DataFrame = nw.from_native(train_data)
         self.val_data: nw.DataFrame = nw.from_native(val_data)
+        self.test_data: nw.DataFrame = nw.from_native(test_data)
+
         self.target_col: str = target_col
 
         self.columns: list[str] = [
             col for col in self.train_data.columns if col != self.target_col
         ]
         self.input_example: IntoDataFrameT = self._get_input_example()
-        self.data_dict: dict[str, Any] = self._prepare_data()
+        self.data_dict: DataDict = self._prepare_data()
 
         self.mlflow_tracker = MLFlowTracker(
             tracking_uri=get_mlflow_endpoint(),
@@ -83,23 +90,28 @@ class ModelTrainer:
         """
         return self.mlflow_tracker._get_run_name(None)
 
-    def _prepare_data(self) -> dict[str, Any]:
+    def _prepare_data(self) -> DataDict:
         """Prepare and return training and validation datasets."""
         x_train = self.train_data.drop(self.target_col).to_numpy()
         y_train = self.train_data[self.target_col].to_numpy()
         x_val = self.val_data.drop(self.target_col).to_numpy()
         y_val = self.val_data[self.target_col].to_numpy()
+        x_test = self.test_data.drop(self.target_col).to_numpy()
+        y_test = self.test_data[self.target_col].to_numpy()
         logger.info(
-            f"Data prepared -> x_train shape: {x_train.shape}, y_train shape: {y_train.shape}, "
-            f"x_val shape: {x_val.shape}, y_val shape: {y_val.shape}"
+            f"Data prepared -> x_train shape: {x_train.shape}, y_train shape: {y_train.shape} | "
+            f"x_val shape: {x_val.shape}, y_val shape: {y_val.shape} | "
+            f"x_test shape: {x_test.shape}, y_test shape: {y_test.shape}"
         )
 
-        return {
-            "x_train": x_train,
-            "y_train": y_train,
-            "x_val": x_val,
-            "y_val": y_val,
-        }
+        return DataDict(
+            x_train=x_train,
+            y_train=y_train,
+            x_val=x_val,
+            y_val=y_val,
+            x_test=x_test,
+            y_test=y_test,
+        )
 
     def _get_input_example(self) -> IntoDataFrameT:
         """Get a sample input example for model logging."""
@@ -117,7 +129,7 @@ class ModelTrainer:
         model = RandomForestRegressor(**params)
 
         # Data preparation
-        arrays_dict: dict[str, np.ndarray] = self.data_dict
+        arrays_dict: DataDict = self.data_dict
         x_train, y_train = arrays_dict["x_train"], arrays_dict["y_train"]
         x_val, y_val = arrays_dict["x_val"], arrays_dict["y_val"]
         X, y = combine_train_val(x_train, y_train, x_val, y_val)
@@ -132,7 +144,7 @@ class ModelTrainer:
     def _train_xgboost(self, params: dict[str, Any]) -> TrainingResult:
         """Train an XGBoost model with time series cross-validation."""
         # Data preparation
-        arrays_dict: dict[str, np.ndarray] = self.data_dict
+        arrays_dict: DataDict = self.data_dict
         x_train, y_train = arrays_dict["x_train"], arrays_dict["y_train"]
         x_val, y_val = arrays_dict["x_val"], arrays_dict["y_val"]
 
@@ -153,8 +165,10 @@ class ModelTrainer:
             early_stopping_rounds=early_stopping_rounds,
         )
         preds = model.predict(dval)
-        metrics: dict[str, float | None] = compute_metrics(
-            y_val, preds, n_features=x_train.shape[1]
+        metrics: MetricsDict = compute_metrics(  # type: ignore
+            y_val,
+            preds,
+            n_features=x_train.shape[1],  # type: ignore
         )
 
         return TrainingResult(trained_model=model, metrics=metrics)  # type: ignore
@@ -162,7 +176,7 @@ class ModelTrainer:
     def _train_lightgbm(self, params: dict[str, Any]) -> TrainingResult:
         """Train a LightGBM model."""
         # Data preparation
-        arrays_dict: dict[str, np.ndarray] = self.data_dict
+        arrays_dict: DataDict = self.data_dict
         x_train, y_train = arrays_dict["x_train"], arrays_dict["y_train"]
         x_val, y_val = arrays_dict["x_val"], arrays_dict["y_val"]
 
@@ -185,10 +199,10 @@ class ModelTrainer:
             ],
         )
         preds = model.predict(x_val)
-        metrics: dict[str, float | None] = compute_metrics(
+        metrics: MetricsDict = compute_metrics(
             y_val,
             preds,  # type: ignore
-            n_features=x_train.shape[1],
+            n_features=x_train.shape[1],  # type: ignore
         )
 
         return TrainingResult(trained_model=model, metrics=metrics)  # type: ignore
@@ -197,7 +211,7 @@ class ModelTrainer:
         """Train models and log results to MLflow."""
         column_names = self.columns
         results: list[TrainingResult] = []
-        data_dict: dict[str, Any] = self.data_dict
+        data_dict: DataDict = self.data_dict
 
         logger.info("🚀 Training with default hyperparameters")
         try:
@@ -205,9 +219,9 @@ class ModelTrainer:
                 # Log data stats
                 self.mlflow_tracker.log_params(
                     {
-                        "train_size": data_dict["x_train"].shape[0],
-                        "val_size": data_dict["x_val"].shape[0],
-                        "n_features": data_dict["x_train"].shape[1],
+                        "train_size": data_dict["x_train"].shape[0],  # type: ignore
+                        "val_size": data_dict["x_val"].shape[0],  # type: ignore
+                        "n_features": data_dict["x_train"].shape[1],  # type: ignore
                     }
                 )
 
@@ -222,7 +236,7 @@ class ModelTrainer:
                     params=params_rf
                 )
                 rf_model: RandomForestRegressor = rf_reg_results.trained_model
-                y_pred: np.ndarray = rf_model.predict(data_dict["x_val"])
+                y_pred: np.ndarray = rf_model.predict(data_dict["x_test"])
 
                 # Feature importance
                 weights_ = rf_model.feature_importances_
@@ -270,7 +284,7 @@ class ModelTrainer:
                 xgb_results: TrainingResult = self._train_xgboost(params=params_xgb)
                 xgb_model: xgb.Booster = xgb_results.trained_model
                 y_pred = xgb_model.predict(
-                    xgb.DMatrix(data_dict["x_val"], enable_categorical=True)
+                    xgb.DMatrix(data_dict["x_test"], enable_categorical=True)
                 )
 
                 # Feature importance
@@ -323,7 +337,7 @@ class ModelTrainer:
                 )
                 lgb_results: TrainingResult = self._train_lightgbm(params=params_lgb)
                 lgb_model: lgb.Booster = lgb_results.trained_model
-                y_pred = lgb_model.predict(data_dict["x_val"])
+                y_pred = lgb_model.predict(data_dict["x_test"])
 
                 # Feature importance
                 model_name = ModelType.LIGHTGBM
@@ -366,7 +380,7 @@ class ModelTrainer:
                 # === End of all models training ===
                 logger.info("✅ ALL models training completed successfully.")
                 test_df: pl.DataFrame = pl.DataFrame(
-                    data_dict["x_val"], schema=column_names
+                    data_dict["x_test"], schema=column_names
                 )
                 self.generate_and_log_visualizations(results=results, test_df=test_df)
                 self.mlflow_tracker.log_artifact_from_path(
@@ -501,7 +515,7 @@ class ModelTrainer:
             rf_reg = RandomForestRegressor(**params)
 
             # Prepare data
-            data_dict: dict[str, Any] = self.data_dict
+            data_dict: DataDict = self.data_dict
             x_train, y_train = data_dict["x_train"], data_dict["y_train"]
             x_val, y_val = data_dict["x_val"], data_dict["y_val"]
             X, y = combine_train_val(x_train, y_train, x_val, y_val)
@@ -510,7 +524,7 @@ class ModelTrainer:
             cv_results: dict[str, Any] = cross_validate_sklearn_model(
                 tscv, X, y, rf_reg
             )
-            metrics: dict[str, float | None] = cv_results.get("metrics", {})
+            metrics: MetricsDict = cv_results.get("metrics", {})
 
             # Return mean RMSE across all CV folds
             mean_rmse = metrics.get("RMSE", 0.0)
@@ -590,7 +604,7 @@ class ModelTrainer:
             num_boost_round: int = params.pop("num_boost_round", 500)  # type: ignore
 
             # Prepare data
-            data_dict: dict[str, Any] = self.data_dict
+            data_dict: DataDict = self.data_dict
             x_train, y_train = data_dict["x_train"], data_dict["y_train"]
             x_val, y_val = data_dict["x_val"], data_dict["y_val"]
             dtrain = xgb.DMatrix(x_train, y_train, enable_categorical=True)
@@ -606,8 +620,10 @@ class ModelTrainer:
                 early_stopping_rounds=early_stopping_rounds,
             )
             preds = model.predict(dval)
-            metrics: dict[str, float | None] = compute_metrics(
-                y_val, preds, n_features=x_train.shape[1]
+            metrics: MetricsDict = compute_metrics(  # type: ignore
+                y_val,
+                preds,
+                n_features=x_train.shape[1],  # type: ignore
             )
 
             mean_rmse = metrics.get("RMSE", 0.0)
@@ -689,7 +705,7 @@ class ModelTrainer:
             )
 
             # Prepare data
-            data_dict: dict[str, Any] = self.data_dict
+            data_dict: DataDict = self.data_dict
             x_train, y_train = data_dict["x_train"], data_dict["y_train"]
             x_val, y_val = data_dict["x_val"], data_dict["y_val"]
 
@@ -712,11 +728,11 @@ class ModelTrainer:
                 ],
             )
             preds = model.predict(x_val, num_iteration=model.best_iteration)
-            metrics: dict[str, float | None] = compute_metrics(
+            metrics: MetricsDict = compute_metrics(
                 y_val,
                 preds,  # type: ignore
-                n_features=x_train.shape[1],
-            )  # type: ignore
+                n_features=x_train.shape[1],  # type: ignore
+            )
 
             mean_rmse = metrics.get("RMSE", 0.0)
             mean_mae = metrics.get("MAE", 0.0)
@@ -776,6 +792,9 @@ class ModelTrainer:
             mape: float | None = rf_result.metrics.get("MAPE", None)  # type: ignore
             adj_r2: float | None = rf_result.metrics.get("Adjusted_R2", None)  # type: ignore
 
+            # Get predictions
+            y_pred: np.ndarray = rf_model.predict(self.data_dict["x_test"])
+
             # Feature importance
             column_names: list[str] = self.columns
             weights_ = rf_model.feature_importances_
@@ -816,6 +835,7 @@ class ModelTrainer:
             best_params=best_params,
             metrics=metrics,
             model_uri=model_uri,
+            predictions=y_pred,
         )
 
     def _hyperparameter_tuning_xgboost(self) -> HyperparameterTuningResult:
@@ -854,6 +874,9 @@ class ModelTrainer:
             mae: float | None = xgb_result.metrics.get("MAE", None)  # type: ignore
             mape: float | None = xgb_result.metrics.get("MAPE", None)  # type: ignore
             adj_r2: float | None = xgb_result.metrics.get("Adjusted_R2", None)  # type: ignore
+
+            # Get predictions
+            y_pred: np.ndarray = xgb_model.predict(self.data_dict["x_test"])
 
             # Feature importance
             column_names: list[str] = self.columns
@@ -899,6 +922,7 @@ class ModelTrainer:
             best_params=best_params,
             metrics=metrics,
             model_uri=model_uri,
+            predictions=y_pred,
         )
 
     def _hyperparameter_tuning_lightgbm(self) -> HyperparameterTuningResult:
@@ -930,13 +954,16 @@ class ModelTrainer:
             tags["model_family"] = model_name
             self.mlflow_tracker.set_tags(tags=tags)
 
-            # Build final model with best params
+            # Build model
             lgb_result: TrainingResult = self._train_lightgbm(best_params)
             lgb_model = lgb_result.trained_model
             rmse: float | None = lgb_result.metrics.get("RMSE", None)  # type: ignore
             mae: float | None = lgb_result.metrics.get("MAE", None)  # type: ignore
             mape: float | None = lgb_result.metrics.get("MAPE", None)  # type: ignore
             adj_r2: float | None = lgb_result.metrics.get("Adjusted_R2", None)  # type: ignore
+
+            # Get predictions
+            y_pred: np.ndarray = lgb_model.predict(self.data_dict["x_test"])
 
             # Feature importance
             column_names: list[str] = self.columns
@@ -981,6 +1008,7 @@ class ModelTrainer:
             best_params=best_params,
             metrics=metrics,
             model_uri=model_uri,
+            predictions=y_pred,
         )
 
     def hyperparameter_tuning_all_models(self) -> list[HyperparameterTuningResult]:

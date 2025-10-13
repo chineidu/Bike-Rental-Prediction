@@ -99,7 +99,7 @@ config:
       grow_policy: ["depthwise", "lossguide"]
       # Number of trials for optimization
       early_stopping_rounds: [10, 50]
-      n_trials: 2
+      n_trials: 5
     # === Hyperparameter search space for LightGBM ===
     lightgbm_optuna_config:
       objective: "regression"
@@ -117,7 +117,7 @@ config:
       num_boost_round: [100, 2000]
       early_stopping_rounds: [10, 100]
       # Number of trials for optimization
-      n_trials: 2
+      n_trials: 5
 
   api_config:
     title: Bike Rental Prediction API

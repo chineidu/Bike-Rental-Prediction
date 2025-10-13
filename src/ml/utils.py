@@ -11,6 +11,8 @@ from sklearn.metrics import r2_score
 from sklearn.metrics._regression import mean_absolute_error, root_mean_squared_error
 from sklearn.model_selection import TimeSeriesSplit
 
+from src.schemas.types import MetricsDict, Number
+
 
 def split_temporal_data_to_train_val_test(
     data: IntoDataFrameT,
@@ -121,10 +123,10 @@ def adjusted_r2_score(y_true: np.ndarray, y_pred: np.ndarray, n_features: int) -
 
 
 def compute_metrics(
-    y_true: np.ndarray | list[float | int],
-    y_pred: np.ndarray | list[float | int],
+    y_true: Number | np.ndarray,
+    y_pred: Number | np.ndarray,
     n_features: int | None = None,
-) -> dict[str, float | None]:
+) -> MetricsDict:
     """
     Compute evaluation metrics between true and predicted values.
 
@@ -145,9 +147,8 @@ def compute_metrics(
 
     Returns:
     -------
-    dict
-        Dictionary with keys 'MAPE', 'MAE', 'RMSE', and 'Adjusted_R2' (if n_features is provided)
-        and their float values.
+    MetricsDict
+        Dictionary containing the computed metrics.
     """
     mae = mean_absolute_error(y_true, y_pred)
     rmse = root_mean_squared_error(y_true, y_pred)
@@ -162,12 +163,12 @@ def compute_metrics(
     if n_features:
         adj_r2 = adjusted_r2_score(y_true, y_pred, n_features)
 
-    return {
-        "MAE": round(mae, 2),
-        "RMSE": round(rmse, 2),
-        "MAPE": round(mape, 2),
-        "Adjusted_R2": round(adj_r2, 2) if n_features else None,
-    }
+    return MetricsDict(
+        MAE=round(mae, 2),
+        RMSE=round(rmse, 2),
+        MAPE=round(mape, 2),
+        Adjusted_R2=round(adj_r2, 2) if n_features else None,
+    )
 
 
 def _calculate_corr(x: list[float] | np.ndarray, y: list[float] | np.ndarray) -> float:
@@ -241,7 +242,7 @@ def cross_validate_sklearn_model(
         # Train and evaluate the model
         model.fit(x_tr, y_tr)  # type: ignore
         y_pred = model.predict(x_val)  # type: ignore
-        metrics: dict[str, float | None] = compute_metrics(
+        metrics: MetricsDict = compute_metrics(
             y_val, y_pred, n_features=x_train.shape[1]
         )
         if verbose:

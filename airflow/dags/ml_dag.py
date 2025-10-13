@@ -298,13 +298,18 @@ def ml_pipeline_dag() -> None:
         target_col: str = params["target_col"] if params else "target"
         train_features_path: str = result["train_features_path"]
         val_features_path: str = result["val_features_path"]
+        test_features_path: str = result["test_features_path"]
 
         train_feats_df: pl.DataFrame = pl.read_parquet(train_features_path)
         val_feats_df: pl.DataFrame = pl.read_parquet(val_features_path)
+        test_feats_df: pl.DataFrame = pl.read_parquet(test_features_path)
         serializable_results: list[dict[str, Any]] = []
 
         trainer = ModelTrainer(
-            train_data=train_feats_df, val_data=val_feats_df, target_col=target_col
+            train_data=train_feats_df,
+            val_data=val_feats_df,
+            test_data=test_feats_df,
+            target_col=target_col,
         )
 
         if not tune_models:
@@ -318,6 +323,7 @@ def ml_pipeline_dag() -> None:
                             "run_id": row.run_id,
                             "model_name": row.model_name,
                             "metrics": row.metrics,
+                            "predictions": row.predictions,
                         }
                     )
 
@@ -349,12 +355,17 @@ def ml_pipeline_dag() -> None:
         target_col: str = params["target_col"] if params else "target"
         train_features_path: str = result["train_features_path"]
         val_features_path: str = result["val_features_path"]
+        test_features_path: str = result["test_features_path"]
 
         train_feats_df: pl.DataFrame = pl.read_parquet(train_features_path)
         val_feats_df: pl.DataFrame = pl.read_parquet(val_features_path)
+        test_feats_df: pl.DataFrame = pl.read_parquet(test_features_path)
 
         trainer = ModelTrainer(
-            train_data=train_feats_df, val_data=val_feats_df, target_col=target_col
+            train_data=train_feats_df,
+            val_data=val_feats_df,
+            test_data=test_feats_df,
+            target_col=target_col,
         )
 
         if tune_models:
@@ -380,8 +391,115 @@ def ml_pipeline_dag() -> None:
             "datetime": get_time_now(),
         }
 
+    @task(multiple_outputs=True, retries=2, trigger_rule="none_failed_min_one_success")
+    def model_evaluation_task(
+        train_result: dict[str, Any] | None = None,
+        tune_result: dict[str, Any] | None = None,
+        features_result: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate the trained models and determine the best one.
+
+        This task accepts results from either training or tuning task and evaluates them.
+        "none_failed_min_one_success": Run this task if at least one upstream task succeeded
+        """
+
+        import numpy as np
+        import polars as pl
+
+        from src.ml.trainer import ModelTrainer
+        from src.ml.utils import compute_metrics
+        from src.schemas.types import ModelType
+
+        # Get model results from whichever task ran (training or tuning)
+        model_results: list[dict[str, Any]] = []
+        if tune_result and tune_result.get("hyperparameter_tuning_results"):
+            model_results = tune_result["hyperparameter_tuning_results"]
+            print("📊 Evaluating hyperparameter tuning results...")
+        elif train_result and train_result.get("training_results"):
+            model_results = train_result["training_results"]
+            print("📊 Evaluating training results...")
+        else:
+            print("⚠️ No model results found to evaluate!")
+            return {
+                "model_name": None,
+                "best_rmse": None,
+                "run_id": None,
+                "datetime": get_time_now(),
+            }
+
+        target_col: str = params["target_col"] if params else "target"
+        train_features_path: str = (
+            features_result["train_features_path"] if features_result else ""
+        )
+        val_features_path: str = (
+            features_result["val_features_path"] if features_result else ""
+        )
+        test_features_path: str = (
+            features_result["test_features_path"] if features_result else ""
+        )
+
+        if not train_features_path or not val_features_path or not test_features_path:
+            print("❌ Feature paths are missing, cannot evaluate models.")
+            return {
+                "model_name": None,
+                "best_rmse": None,
+                "run_id": None,
+                "datetime": get_time_now(),
+            }
+
+        train_feats_df: pl.DataFrame = pl.read_parquet(train_features_path)
+        val_feats_df: pl.DataFrame = pl.read_parquet(val_features_path)
+        test_feats_df: pl.DataFrame = pl.read_parquet(test_features_path)
+
+        trainer = ModelTrainer(
+            train_data=train_feats_df,
+            val_data=val_feats_df,
+            test_data=test_feats_df,
+            target_col=target_col,
+        )
+
+        try:
+            best_score: float = 1_000.0
+            best_model: ModelType | None = None
+            run_id: str | None = None
+            y_true: np.ndarray = np.asarray(trainer.data_dict["y_test"])
+
+            print(f"🚨 Evaluating {len(model_results)} model performances ...")
+            # Determine the best model
+            for model_info in model_results:
+                y_pred: np.ndarray = np.array(model_info.get("predictions", []))
+                if len(y_pred) == 0:
+                    print(
+                        f"⚠️ No predictions found for {model_info.get('model_name', 'unknown')}"
+                    )
+                    continue
+
+                metrics = compute_metrics(y_true=y_true, y_pred=y_pred)
+                rmse: float = metrics["RMSE"]
+                print(f"  → {model_info.get('model_name')}: RMSE = {rmse:.4f}")
+
+                if rmse < best_score:
+                    best_score = rmse
+                    best_model = model_info["model_name"]
+                    run_id = model_info["run_id"]
+
+            print(f"\n🏆 Best model: {best_model} with RMSE = {best_score:.4f}")
+
+            return {
+                "model_name": str(best_model) if best_model else None,
+                "best_rmse": best_score if best_model else None,
+                "run_id": run_id,
+                "datetime": get_time_now(),
+            }
+
+        except Exception:
+            print(traceback.format_exc())
+            raise
+
     @task.branch
     def decide_tuning_branch(params: dict[str, Any] | None = None) -> str:
+        """Decide whether to branch to hyperparameter tuning or direct model training."""
         tune_models: bool = params["tune_models"] if params else False
         if tune_models:
             print("✅ Hyperparameter tuning enabled - branching to tuning task")
@@ -410,12 +528,16 @@ def ml_pipeline_dag() -> None:
         target_col: str = params["target_col"] if params else "target"
         train_features_path: str = result["train_features_path"]
         val_features_path: str = result["val_features_path"]
-
+        test_features_path: str = result["test_features_path"]
         train_feats_df: pl.DataFrame = pl.read_parquet(train_features_path)
         val_feats_df: pl.DataFrame = pl.read_parquet(val_features_path)
+        test_feats_df: pl.DataFrame = pl.read_parquet(test_features_path)
 
         trainer = ModelTrainer(
-            train_data=train_feats_df, val_data=val_feats_df, target_col=target_col
+            train_data=train_feats_df,
+            val_data=val_feats_df,
+            test_data=test_feats_df,
+            target_col=target_col,
         )
 
         try:
@@ -490,10 +612,20 @@ def ml_pipeline_dag() -> None:
     # Branching logic
     tuning_decision: XComArg = decide_tuning_branch()
 
+    # Evaluation task
+    result_evaluate: XComArg = model_evaluation_task(
+        train_result=result_train,
+        tune_result=result_tune,
+        features_result=result_features,
+    )
+
     # Set task dependencies
     result_init_artifacts >> [result_load, result_validate]
     result_validate >> [result_data_split, result_features] >> tuning_decision
-    tuning_decision >> [result_tune, result_train] >> result_register
+    tuning_decision >> [result_tune, result_train]
+
+    # Evaluation runs after either training or tuning completes
+    [result_train, result_tune] >> result_evaluate >> result_register
 
     # Run cleanup after model registration completes (success or failure)
     result_register >> cleanup

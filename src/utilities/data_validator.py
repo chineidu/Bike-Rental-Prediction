@@ -115,7 +115,7 @@ def get_numeric_summary_stats(data: nw.DataFrame) -> list[dict[str, Any]]:
 
         # Others: count, missing_values, unique_values
         count: int = series.count()
-        missing_values: int = series.is_null().sum()
+        missing_values: int = series.is_null().sum()  # type: ignore
         missing_pct: float = (missing_values / series.shape[0]).__round__(2)
         unique_values: int = series.n_unique()
 
@@ -194,7 +194,7 @@ def get_categorical_summary_stats(data: nw.DataFrame) -> list[dict[str, Any]]:
 
         # Basic stats: count, missing_values, missing_pct, unique_values
         count: int = series.count()
-        missing_values: int = series.is_null().sum()
+        missing_values: int = series.is_null().sum()  # type: ignore
         missing_pct: float = (missing_values / series.shape[0] * 100).__round__(2)
         unique_values: int = series.n_unique()
 
@@ -356,7 +356,7 @@ def get_cardinality_info(data: nw.DataFrame) -> dict[str, Any]:
         "num_unique_numeric_rows": {"age": 42},
         "num_unique_categorical_rows": {"city": 12}
     """
-    cardinality: dict[str, int] = {
+    cardinality: dict[str, int] = {  # type: ignore
         "num_unique_numeric_rows": {
             col: data[col].n_unique()
             for col in data.select(n_cs.numeric()).columns  # type: ignore
