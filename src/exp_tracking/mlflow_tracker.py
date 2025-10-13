@@ -747,12 +747,6 @@ class MLFlowTracker:
             except Exception as e:
                 logger.warning(f"Failed to convert input example: {e}")
 
-        input_example_df = (
-            input_example_df.drop(columns=["target"])
-            if isinstance(input_example_df, pd.DataFrame)
-            else None
-        )
-
         try:
             with mlflow.start_run(run_id=run_id):  # type: ignore
                 # Determine model type

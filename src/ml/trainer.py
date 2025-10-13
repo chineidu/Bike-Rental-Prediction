@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 import lightgbm as lgb
+import narwhals as nw
 import numpy as np
 import optuna
 import polars as pl
@@ -27,7 +28,6 @@ from src.ml.utils import (
     get_feature_importance_from_booster,
     get_lightgbm_feature_importance,
     get_model_feature_importance,
-    split_into_train_val_test_sets,
 )
 from src.ml.visualization import create_grouped_metrics_barchart
 from src.schemas import HyperparameterTuningResult, TrainingResult
@@ -38,9 +38,18 @@ logger = create_logger(name="trainer")
 
 
 class ModelTrainer:
-    def __init__(self, data: IntoDataFrameT) -> None:
-        self.data: IntoDataFrameT = data
-        self.input_example: IntoDataFrameT = data
+    def __init__(
+        self, train_data: IntoDataFrameT, val_data: IntoDataFrameT, target_col: str
+    ) -> None:
+        self.train_data: nw.DataFrame = nw.from_native(train_data)
+        self.val_data: nw.DataFrame = nw.from_native(val_data)
+        self.target_col: str = target_col
+
+        self.columns: list[str] = [
+            col for col in self.train_data.columns if col != self.target_col
+        ]
+        self.input_example: IntoDataFrameT = self._get_input_example()
+        self.data_dict: dict[str, Any] = self._prepare_data()
 
         self.mlflow_tracker = MLFlowTracker(
             tracking_uri=get_mlflow_endpoint(),
@@ -49,7 +58,6 @@ class ModelTrainer:
         self.test_size: float | int = (
             app_config.model_training_config.general_config.test_size
         )
-        self.data_dict: dict[str, Any] = self._prepare_data()
 
         # Configs
         self.n_splits: int = app_config.model_training_config.general_config.n_splits
@@ -61,7 +69,7 @@ class ModelTrainer:
         )
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(data_shape={self.data.shape})"
+        return f"{self.__class__.__name__}(train_data_shape={self.train_data.shape}, val_data_shape={self.val_data.shape})"
 
     @property
     def run_name(self) -> str:
@@ -76,14 +84,26 @@ class ModelTrainer:
         return self.mlflow_tracker._get_run_name(None)
 
     def _prepare_data(self) -> dict[str, Any]:
-        """Prepare data by applying feature engineering."""
-        data_df: IntoDataFrameT = self.data
-        data_dict: dict[str, Any] = split_into_train_val_test_sets(
-            data_df, test_size=self.test_size, target_col="target"
+        """Prepare and return training and validation datasets."""
+        x_train = self.train_data.drop(self.target_col).to_numpy()
+        y_train = self.train_data[self.target_col].to_numpy()
+        x_val = self.val_data.drop(self.target_col).to_numpy()
+        y_val = self.val_data[self.target_col].to_numpy()
+        logger.info(
+            f"Data prepared -> x_train shape: {x_train.shape}, y_train shape: {y_train.shape}, "
+            f"x_val shape: {x_val.shape}, y_val shape: {y_val.shape}"
         )
 
-        logger.info("Data preparation complete.")
-        return data_dict
+        return {
+            "x_train": x_train,
+            "y_train": y_train,
+            "x_val": x_val,
+            "y_val": y_val,
+        }
+
+    def _get_input_example(self) -> IntoDataFrameT:
+        """Get a sample input example for model logging."""
+        return self.train_data.drop([self.target_col]).head(5)
 
     def _train_random_forest(self, params: dict[str, Any]) -> TrainingResult:
         """Train a Random Forest model with time series cross-validation."""
@@ -95,9 +115,11 @@ class ModelTrainer:
         )
         params["random_state"] = self.random_seed
         model = RandomForestRegressor(**params)
-        data_dict: dict[str, Any] = self.data_dict
-        x_train, y_train = data_dict["x_train"], data_dict["y_train"]
-        x_val, y_val = data_dict["x_val"], data_dict["y_val"]
+
+        # Data preparation
+        arrays_dict: dict[str, np.ndarray] = self.data_dict
+        x_train, y_train = arrays_dict["x_train"], arrays_dict["y_train"]
+        x_val, y_val = arrays_dict["x_val"], arrays_dict["y_val"]
         X, y = combine_train_val(x_train, y_train, x_val, y_val)
 
         logger.info(
@@ -109,10 +131,10 @@ class ModelTrainer:
 
     def _train_xgboost(self, params: dict[str, Any]) -> TrainingResult:
         """Train an XGBoost model with time series cross-validation."""
-        data_dict: dict[str, Any] = self.data_dict
-
-        x_train, y_train = data_dict["x_train"], data_dict["y_train"]
-        x_val, y_val = data_dict["x_val"], data_dict["y_val"]
+        # Data preparation
+        arrays_dict: dict[str, np.ndarray] = self.data_dict
+        x_train, y_train = arrays_dict["x_train"], arrays_dict["y_train"]
+        x_val, y_val = arrays_dict["x_val"], arrays_dict["y_val"]
 
         dtrain = xgb.DMatrix(x_train, y_train, enable_categorical=True)
         dval = xgb.DMatrix(x_val, y_val, enable_categorical=True)
@@ -139,10 +161,10 @@ class ModelTrainer:
 
     def _train_lightgbm(self, params: dict[str, Any]) -> TrainingResult:
         """Train a LightGBM model."""
-        data_dict: dict[str, Any] = self.data_dict
-
-        x_train, y_train = data_dict["x_train"], data_dict["y_train"]
-        x_val, y_val = data_dict["x_val"], data_dict["y_val"]
+        # Data preparation
+        arrays_dict: dict[str, np.ndarray] = self.data_dict
+        x_train, y_train = arrays_dict["x_train"], arrays_dict["y_train"]
+        x_val, y_val = arrays_dict["x_val"], arrays_dict["y_val"]
 
         # Create datasets for LightGBM
         lgb_train = lgb.Dataset(x_train, y_train)
@@ -173,7 +195,7 @@ class ModelTrainer:
 
     def train_all_models(self) -> list[TrainingResult]:
         """Train models and log results to MLflow."""
-        column_names = self.data_dict["columns"]
+        column_names = self.columns
         results: list[TrainingResult] = []
         data_dict: dict[str, Any] = self.data_dict
 
@@ -183,8 +205,8 @@ class ModelTrainer:
                 # Log data stats
                 self.mlflow_tracker.log_params(
                     {
-                        "train_size": len(data_dict["x_train"]),
-                        "test_size": len(data_dict["x_test"]),
+                        "train_size": data_dict["x_train"].shape[0],
+                        "val_size": data_dict["x_val"].shape[0],
                         "n_features": data_dict["x_train"].shape[1],
                     }
                 )
@@ -200,7 +222,7 @@ class ModelTrainer:
                     params=params_rf
                 )
                 rf_model: RandomForestRegressor = rf_reg_results.trained_model
-                y_pred: np.ndarray = rf_model.predict(data_dict["x_test"])
+                y_pred: np.ndarray = rf_model.predict(data_dict["x_val"])
 
                 # Feature importance
                 weights_ = rf_model.feature_importances_
@@ -248,7 +270,7 @@ class ModelTrainer:
                 xgb_results: TrainingResult = self._train_xgboost(params=params_xgb)
                 xgb_model: xgb.Booster = xgb_results.trained_model
                 y_pred = xgb_model.predict(
-                    xgb.DMatrix(data_dict["x_test"], enable_categorical=True)
+                    xgb.DMatrix(data_dict["x_val"], enable_categorical=True)
                 )
 
                 # Feature importance
@@ -301,7 +323,7 @@ class ModelTrainer:
                 )
                 lgb_results: TrainingResult = self._train_lightgbm(params=params_lgb)
                 lgb_model: lgb.Booster = lgb_results.trained_model
-                y_pred = lgb_model.predict(data_dict["x_test"])
+                y_pred = lgb_model.predict(data_dict["x_val"])
 
                 # Feature importance
                 model_name = ModelType.LIGHTGBM
@@ -344,7 +366,7 @@ class ModelTrainer:
                 # === End of all models training ===
                 logger.info("✅ ALL models training completed successfully.")
                 test_df: pl.DataFrame = pl.DataFrame(
-                    data_dict["x_test"], schema=column_names
+                    data_dict["x_val"], schema=column_names
                 )
                 self.generate_and_log_visualizations(results=results, test_df=test_df)
                 self.mlflow_tracker.log_artifact_from_path(
@@ -477,6 +499,8 @@ class ModelTrainer:
                 "random_state": self.random_seed,
             }
             rf_reg = RandomForestRegressor(**params)
+
+            # Prepare data
             data_dict: dict[str, Any] = self.data_dict
             x_train, y_train = data_dict["x_train"], data_dict["y_train"]
             x_val, y_val = data_dict["x_val"], data_dict["y_val"]
@@ -664,8 +688,8 @@ class ModelTrainer:
                 optuna_config.early_stopping_rounds[1],
             )
 
+            # Prepare data
             data_dict: dict[str, Any] = self.data_dict
-
             x_train, y_train = data_dict["x_train"], data_dict["y_train"]
             x_val, y_val = data_dict["x_val"], data_dict["y_val"]
 
@@ -753,7 +777,7 @@ class ModelTrainer:
             adj_r2: float | None = rf_result.metrics.get("Adjusted_R2", None)  # type: ignore
 
             # Feature importance
-            column_names: list[str] = self.data_dict["columns"]
+            column_names: list[str] = self.columns
             weights_ = rf_model.feature_importances_
 
             feat_importance: dict[str, Any]
@@ -832,7 +856,7 @@ class ModelTrainer:
             adj_r2: float | None = xgb_result.metrics.get("Adjusted_R2", None)  # type: ignore
 
             # Feature importance
-            column_names: list[str] = self.data_dict["columns"]
+            column_names: list[str] = self.columns
             weights_dict: dict[str, float] = get_feature_importance_from_booster(
                 xgb_model,
                 column_names,
@@ -915,7 +939,7 @@ class ModelTrainer:
             adj_r2: float | None = lgb_result.metrics.get("Adjusted_R2", None)  # type: ignore
 
             # Feature importance
-            column_names: list[str] = self.data_dict["columns"]
+            column_names: list[str] = self.columns
             feat_imp_df: pl.DataFrame = get_lightgbm_feature_importance(
                 lgb_model, column_names
             )

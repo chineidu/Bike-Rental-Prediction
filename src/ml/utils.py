@@ -12,23 +12,60 @@ from sklearn.metrics._regression import mean_absolute_error, root_mean_squared_e
 from sklearn.model_selection import TimeSeriesSplit
 
 
-def split_temporal_data(
-    data: IntoDataFrameT, test_size: float = 0.2
-) -> tuple[IntoDataFrameT, IntoDataFrameT]:
-    """Split data into training and testing sets while maintaining temporal order."""
+def split_temporal_data_to_train_val_test(
+    data: IntoDataFrameT,
+    test_size: float = 0.2,
+    val_size: float = 0.2,
+    print_shapes: bool = True,
+) -> tuple[IntoDataFrameT, IntoDataFrameT, IntoDataFrameT]:
+    """Split data into train, validation and test sets while maintaining temporal order.
 
+    Parameters
+    ----------
+    data : IntoDataFrameT
+        The input dataframe to be split.
+    test_size : float, default=0.2
+        Proportion of the dataset to include in the test split.
+    val_size : float, default=0.2
+        Proportion of the dataset to include in the validation split.
+    print_shapes : bool, default=True
+        Whether to print the shapes of the resulting dataframes.
+
+    Returns
+    -------
+    tuple[IntoDataFrameT, IntoDataFrameT, IntoDataFrameT]
+        A tuple containing the train, validation, and test dataframes.
+    """
+    # Validation
+    if not 0.0 <= test_size <= 1.0 or not 0.0 <= val_size <= 1.0:
+        raise ValueError("test_size and val_size must be between 0.0 and 1.0")
+    if (test_size + val_size) >= 1.0:
+        raise ValueError("The sum of test_size and val_size must be less than 1.0")
+
+    # Convert to Narwhals DataFrame
     nw_data: nw.DataFrame = nw.from_native(data)
-    train_size: float = int((1 - test_size) * nw_data.shape[0])
+    num_train: int = int((1 - test_size - val_size) * nw_data.shape[0])
+    num_val: int = int(val_size * nw_data.shape[0])
 
+    # Add index
     nw_data = nw_data.with_row_index()
-    train_data: nw.DataFrame = nw_data.filter(nw.col("index") < train_size).drop(
-        "index"
-    )
-    test_data: nw.DataFrame = nw_data.filter(nw.col("index") >= train_size).drop(
+    train_data: nw.DataFrame = nw_data.filter(nw.col("index") <= num_train).drop(
         "index"
     )
 
-    return (train_data.to_native(), test_data.to_native())
+    val_data: nw.DataFrame = nw_data.filter(
+        (nw.col("index") > num_train) & (nw.col("index") <= (num_train + num_val))
+    ).drop("index")
+    test_data: nw.DataFrame = nw_data.filter(
+        nw.col("index") > (num_train + num_val)
+    ).drop("index")
+
+    if print_shapes:
+        print(
+            f"Shapes -> Train shape: {train_data.shape} | Val shape: {val_data.shape} | Test shape: {test_data.shape}"
+        )
+
+    return (train_data.to_native(), val_data.to_native(), test_data.to_native())
 
 
 def split_into_train_test_sets(
@@ -49,68 +86,6 @@ def split_into_train_test_sets(
         "x_test": x_test,
         "y_test": y_test,
         "columns": columns,
-    }
-
-
-def split_into_train_val_test_sets(
-    data: IntoDataFrameT, test_size: float, target_col: str
-) -> dict[str, Any]:
-    """
-    Split a feature dataframe into temporal train, validation, and test sets.
-
-    Parameters
-    ----------
-    data : IntoDataFrameT
-        Input feature dataframe containing the target column.
-    test_size : float
-        Proportion of the data reserved for validation and test splits. Must be in (0, 1).
-    target_col : str
-        Name of the target column used for supervised learning.
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary with feature and target arrays for train, validation, and test sets,
-        along with the feature column names.
-    """
-    if not 0 < test_size < 1:
-        raise ValueError("`test_size` must be between 0 and 1 (exclusive).")
-
-    _train_df, test_df = split_temporal_data(data=data, test_size=test_size)
-    train_df, val_df = split_temporal_data(data=_train_df, test_size=test_size)
-
-    train_val_split = split_into_train_test_sets(
-        train_df=train_df, test_df=val_df, target_col=target_col
-    )
-    train_test_split = split_into_train_test_sets(
-        train_df=_train_df, test_df=test_df, target_col=target_col
-    )
-
-    x_train, y_train = train_val_split["x_train"], train_val_split["y_train"]
-    x_val, y_val = train_val_split["x_test"], train_val_split["y_test"]
-    x_test, y_test = train_test_split["x_test"], train_test_split["y_test"]
-
-    if train_val_split["columns"] != train_test_split["columns"]:
-        raise ValueError("Feature column mismatch between validation and test splits.")
-    if x_train.shape[0] + x_val.shape[0] != train_test_split["x_train"].shape[0]:
-        raise ValueError("Train and validation rows do not sum to the expected total.")
-
-    print(
-        (
-            f"Shapes -> x_train: {x_train.shape}, y_train: {y_train.shape}, "
-            f"x_val: {x_val.shape}, y_val: {y_val.shape}, "
-            f"x_test: {x_test.shape}, y_test: {y_test.shape}"
-        )
-    )
-
-    return {
-        "x_train": x_train,
-        "y_train": y_train,
-        "x_val": x_val,
-        "y_val": y_val,
-        "x_test": x_test,
-        "y_test": y_test,
-        "columns": train_val_split["columns"],
     }
 
 
