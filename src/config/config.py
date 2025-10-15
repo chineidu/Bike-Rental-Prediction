@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from omegaconf import DictConfig, OmegaConf
 from pydantic import Field
@@ -54,13 +54,23 @@ class FeatureConfig(BaseSchema):
     target_col: str = Field(..., description="Target column name")
 
 
+class BusinessConfig(BaseSchema):
+    min_price: float = Field(..., description="Minimum price for bike rental")
+    max_price: float = Field(..., description="Maximum price for bike rental")
+    base_price: float = Field(..., description="Base price for bike rental")
+    max_capacity: int = Field(
+        ..., description="Maximum capacity of bikes available for rental"
+    )
+    currency: str = Field(..., description="Currency for pricing")
+
+
 class ExperimentTags(BaseSchema):
     project: str = Field(..., description="Project name")
     metric_of_interest: Literal["RMSE", "MAE", "MAPE", "MSE"] = Field(
         ..., description="Metric of interest"
     )
-    others: dict[str, int | str] | None = Field(
-        None, description="Additional tags as key-value pairs"
+    others: dict[str, Any] = Field(
+        default_factory=dict, description="Additional tags as key-value pairs"
     )
 
 
@@ -80,16 +90,8 @@ class GeneralConfig(BaseSchema):
     n_splits: int = Field(
         ..., description="Number of splits for time series cross-validation"
     )
-
-
-class RandomForestConfig(BaseSchema):
-    n_estimators: int = Field(..., description="Number of trees in the forest")
-    max_depth: int | None = Field(None, description="Maximum depth of the tree")
-    min_samples_split: int = Field(
-        ..., description="Minimum number of samples required to split an internal node"
-    )
-    min_samples_leaf: int = Field(
-        ..., description="Minimum number of samples required to be at a leaf node"
+    n_startup_trials: int = Field(
+        ..., description="Number of initial trials without pruning"
     )
 
 
@@ -113,14 +115,6 @@ class RandomForestOptunaConfig(BaseSchema):
     n_trials: int = Field(
         ..., description="Number of Optuna trials for hyperparameter optimization"
     )
-
-
-class XGBoostConfig(BaseSchema):
-    objective: str = Field(..., description="Objective function")
-    n_estimators: int = Field(..., description="Number of trees in the ensemble")
-    learning_rate: float = Field(..., description="Learning rate")
-    early_stopping_rounds: int | None = Field(None, description="Early stopping rounds")
-    num_boost_round: int = Field(500, description="Number of boosting rounds")
 
 
 class XGBoostOptunaConfig(BaseSchema):
@@ -148,8 +142,8 @@ class XGBoostOptunaConfig(BaseSchema):
         ..., description="Range for minimum sum of instance weight needed in a child"
     )
     eta: tuple[float, float] = Field(..., description="Range for learning rate")
-    n_estimators: tuple[int, int] = Field(
-        ..., description="Range for number of estimators"
+    num_boost_round: tuple[int, int] = Field(
+        ..., description="Range for number of boosting rounds (NOT n_estimators)"
     )
     grow_policy: tuple[
         Literal["depthwise", "lossguide"], Literal["depthwise", "lossguide"]
@@ -160,15 +154,6 @@ class XGBoostOptunaConfig(BaseSchema):
     n_trials: int = Field(
         ..., description="Number of Optuna trials for hyperparameter optimization"
     )
-
-
-class LightGBMConfig(BaseSchema):
-    objective: str = Field(..., description="Objective function")
-    metric: list[str] = Field(..., description="List of evaluation metrics")
-    learning_rate: float = Field(..., description="Learning rate")
-    early_stopping_rounds: int | None = Field(None, description="Early stopping rounds")
-    num_boost_round: int = Field(500, description="Number of boosting rounds")
-    verbose: int = Field(1, ge=-1, le=3, description="Verbosity of training")
 
 
 class LightGBMOptunaConfig(BaseSchema):
@@ -207,13 +192,13 @@ class ModelTrainingConfig(BaseSchema):
     general_config: GeneralConfig = Field(
         ..., description="General model configuration"
     )
-    random_forest_config: RandomForestConfig = Field(
+    random_forest_config: dict[str, Any] = Field(
         ..., description="Random Forest model configuration"
     )
-    xgboost_config: XGBoostConfig = Field(
+    xgboost_config: dict[str, Any] = Field(
         ..., description="XGBoost model configuration"
     )
-    lightgbm_config: LightGBMConfig = Field(
+    lightgbm_config: dict[str, Any] = Field(
         ..., description="LightGBM model configuration"
     )
 
@@ -274,6 +259,9 @@ class AppConfig(BaseSchema):
 
     feature_config: FeatureConfig = Field(
         description="Feature engineering configuration"
+    )
+    business_config: BusinessConfig = Field(
+        description="Business-specific configuration"
     )
     experiment_config: ExperimentConfig = Field(
         description="Experiment tracking configuration"

@@ -71,7 +71,7 @@ dag_params: dict[str, Param] = {
         default=0.1,
         description="Proportion of data to use for test set",
     ),
-    # Model training
+    # Model related
     "target_col": Param(
         default="target",
         description="Name of the target column in the dataset",
@@ -79,6 +79,14 @@ dag_params: dict[str, Param] = {
     "tune_models": Param(
         default=False,
         description="Whether to perform hyperparameter tuning for models",
+    ),
+    "environment": Param(
+        default="staging",
+        description="Environment for the model (e.g., staging, production)",
+    ),
+    "model_version": Param(
+        default="2",
+        description="Version for the model",
     ),
 }
 
@@ -336,6 +344,8 @@ def ml_pipeline_dag() -> None:
                 print(traceback.format_exc())
                 raise
 
+            # download_model_task was moved to top-level within the DAG so it can be referenced
+
         return {
             "training_results": [],
             "datetime": get_time_now(),
@@ -391,7 +401,11 @@ def ml_pipeline_dag() -> None:
             "datetime": get_time_now(),
         }
 
-    @task(multiple_outputs=True, retries=2, trigger_rule="none_failed_min_one_success")
+    @task(
+        multiple_outputs=True,
+        retries=2,
+        trigger_rule="none_failed_min_one_success",  # Continue if at least one upstream task succeeded
+    )
     def model_evaluation_task(
         train_result: dict[str, Any] | None = None,
         tune_result: dict[str, Any] | None = None,
@@ -423,7 +437,7 @@ def ml_pipeline_dag() -> None:
             print("⚠️ No model results found to evaluate!")
             return {
                 "model_name": None,
-                "best_rmse": None,
+                "RMSE": None,
                 "run_id": None,
                 "datetime": get_time_now(),
             }
@@ -443,7 +457,7 @@ def ml_pipeline_dag() -> None:
             print("❌ Feature paths are missing, cannot evaluate models.")
             return {
                 "model_name": None,
-                "best_rmse": None,
+                "RMSE": None,
                 "run_id": None,
                 "datetime": get_time_now(),
             }
@@ -488,7 +502,7 @@ def ml_pipeline_dag() -> None:
 
             return {
                 "model_name": str(best_model) if best_model else None,
-                "best_rmse": best_score if best_model else None,
+                "RMSE": best_score if best_model else None,
                 "run_id": run_id,
                 "datetime": get_time_now(),
             }
@@ -508,7 +522,11 @@ def ml_pipeline_dag() -> None:
         print("🚨 Hyperparameter tuning disabled - skipping tuning task")
         return "model_training_task"
 
-    @task(multiple_outputs=True, retries=2, trigger_rule="none_failed_min_one_success")
+    @task(
+        multiple_outputs=True,
+        retries=2,
+        trigger_rule="none_failed_min_one_success",  # Continue if at least one upstream task succeeded
+    )
     def register_best_model_task(
         result: dict[str, Any], params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -522,10 +540,14 @@ def ml_pipeline_dag() -> None:
         import polars as pl
 
         from src.config import app_config
-        from src.exp_tracking.model_loader import load_best_model
+        from src.exp_tracking.model_loader import (
+            load_best_model,
+            set_registered_model_alias,
+        )
         from src.ml.trainer import ModelTrainer
 
         target_col: str = params["target_col"] if params else "target"
+        environment: str = params["environment"] if params else "staging"
         train_features_path: str = result["train_features_path"]
         val_features_path: str = result["val_features_path"]
         test_features_path: str = result["test_features_path"]
@@ -539,31 +561,178 @@ def ml_pipeline_dag() -> None:
             test_data=test_feats_df,
             target_col=target_col,
         )
+        client = trainer.mlflow_tracker.client
 
         try:
-            # Get MLflow tracking URI from environment variable or use default
-            mlflow_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5001")
+            # Get MLflow tracking URI from environment variable or construct from MLFLOW_HOST
+            mlflow_host = os.getenv("MLFLOW_HOST", "localhost")
+            mlflow_port = os.getenv("MLFLOW_PORT", "5001")
+            mlflow_uri: str = os.getenv(
+                "MLFLOW_TRACKING_URI", f"http://{mlflow_host}:{mlflow_port}"
+            )
             print(f"🔗 Using MLflow tracking URI: {mlflow_uri}\n\n")
 
             # Load the best model from the experiment
             best_model_artifacts: dict[str, Any] | None = load_best_model(
                 experiment_name=app_config.experiment_config.experiment_name,
+                client=client,
                 tracking_uri=mlflow_uri,
             )
+
+            print(f"📊 Best model artifacts loaded: {best_model_artifacts is not None}")
+            if best_model_artifacts is None:
+                print("❌ No best model found in the experiment!")
+                return {
+                    "status": "❌ No best model found",
+                    "model_name": None,
+                    "model_version": None,
+                    "run_id": None,
+                    "model_version_alias": None,
+                    "datetime": get_time_now(),
+                }
+
             if best_model_artifacts:
-                trainer.mlflow_tracker.register_model(
+                print(f"📦 Best model artifacts: {best_model_artifacts.keys()}")
+                print(f"🏷️  Model name: {best_model_artifacts['model_name']}")
+                print(f"🏷️  Model type: {type(best_model_artifacts['model_name'])}")
+                print(f"🆔 Run ID: {best_model_artifacts['run_id']}")
+
+                # Register model and get the actual version
+                actual_version: str = trainer.mlflow_tracker.register_model(
                     run_id=best_model_artifacts["run_id"],
                     model=best_model_artifacts["model"],
                     model_name=best_model_artifacts["model_name"],
                     input_example=train_feats_df.drop([target_col]).head(5),
+                    environment=environment,
                 )
+                print(f"✅ Model registered with MLflow (version: {actual_version})")
+
+                # DEBUG: List registered models after registration
+                print("\n📋 Checking registered models after registration:")
+                registered_models = client.search_registered_models()
+                for rm in registered_models:
+                    print(f"  - {rm.name}")
+                print()
+
+                print("⚠️ Setting model alias ...")
+                reg_dict: dict[str, Any] | None = set_registered_model_alias(
+                    client=client,
+                    model_name=best_model_artifacts["model_name"],
+                    model_version_alias=environment,
+                    version=actual_version,  # Use the actual version from registration
+                    environment=environment,
+                )
+                print(f"✅ Model alias set. Result: {reg_dict}")
+                print("✅ Model registration completed.\n")
+
+                # Prepare return values with safe defaults
+                model_name_fallback = (
+                    f"{best_model_artifacts['model_name']}_{environment}"
+                )
+                return {
+                    "status": "✅ Model registered successfully",
+                    "model_name": reg_dict.get("model_name")
+                    if reg_dict
+                    else model_name_fallback,
+                    "model_version": reg_dict.get("version")
+                    if reg_dict
+                    else actual_version,
+                    "run_id": best_model_artifacts["run_id"],
+                    "model_version_alias": reg_dict.get("model_version_alias")
+                    if reg_dict
+                    else environment,
+                    "datetime": get_time_now(),
+                }
+
+            print("❌ Model registration failed.\n")
             return {
-                "status": "✅ Model registered successfully",
+                "status": "❌ Model registration failed",
+                "model_name": None,
+                "model_version": None,
+                "run_id": None,
+                "model_version_alias": None,
                 "datetime": get_time_now(),
             }
 
         except Exception:
             print(traceback.format_exc())
+            raise
+
+    @task(multiple_outputs=True, retries=2)
+    def model_download_task(
+        result: dict[str, Any], params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Download the registered model from the model registry and persist it to the
+        artifacts models directory so downstream services (e.g., API) can consume it.
+        """
+        import os
+
+        from src.exp_tracking.model_loader import (
+            download_model,
+            load_registered_model_from_registry,
+        )
+
+        try:
+            # Get MLflow tracking URI from environment variable or construct from MLFLOW_HOST
+            mlflow_host = os.getenv("MLFLOW_HOST", "localhost")
+            mlflow_port = os.getenv("MLFLOW_PORT", "5001")
+            mlflow_uri: str = os.getenv(
+                "MLFLOW_TRACKING_URI", f"http://{mlflow_host}:{mlflow_port}"
+            )
+            print(f"🔗 Using MLflow tracking URI: {mlflow_uri}")
+
+            artifacts_path: str = (
+                params["artifacts_path"] if params else str(ARTIFACTS_DIR)
+            )
+            models_dir = Path(artifacts_path) / "models"
+            models_dir.mkdir(parents=True, exist_ok=True)
+
+            model_name: str | None = result.get("model_name", None)
+            model_version: str | None = result.get("model_version", None)
+            model_version_alias: str | None = result.get("model_version_alias", None)
+
+            # Clean existing model files
+            for item in models_dir.iterdir():
+                if item.is_file():
+                    try:
+                        item.unlink()
+                        print(f"⚠️ Deleted file: {item.name}")
+                    except OSError as e:
+                        print(f"❌ Error deleting {item.name}: {e}")
+
+            if (
+                model_name is None
+                or model_version is None
+                or model_version_alias is None
+            ):
+                raise ValueError("Model name, version, or alias is missing from input")
+
+            # Load model from registry
+            print(
+                f"🚨 Loading model: {model_name} (version alias: {model_version_alias})"
+            )
+            model: Any = load_registered_model_from_registry(
+                model_name=str(model_name),
+                model_version_alias=model_version_alias,
+                tracking_uri=mlflow_uri,
+            )
+
+            if model is None:
+                raise RuntimeError("❌ Failed to download model from registry")
+
+            # Persist model based on the actual model type
+            model_path: Path = download_model(
+                model=model,
+                model_name=model_name,
+                model_version=model_version,
+                models_dir=models_dir,
+            )
+
+            print(f"✅ Saved registered model to: {model_path}")
+            return {"model_path": str(model_path), "datetime": get_time_now()}
+
+        except Exception as e:
+            print(f"❌ download_model_task failed: {e}")
             raise
 
     cleanup = BashOperator(
@@ -608,6 +777,7 @@ def ml_pipeline_dag() -> None:
     result_train: XComArg = model_training_task(result_features)
     result_tune: XComArg = hyperparameter_tuning_task(result_features)
     result_register: XComArg = register_best_model_task(result_features)
+    result_download: XComArg = model_download_task(result_register)
 
     # Branching logic
     tuning_decision: XComArg = decide_tuning_branch()
@@ -627,8 +797,8 @@ def ml_pipeline_dag() -> None:
     # Evaluation runs after either training or tuning completes
     [result_train, result_tune] >> result_evaluate >> result_register
 
-    # Run cleanup after model registration completes (success or failure)
-    result_register >> cleanup
+    # Download registered model for API consumption, then cleanup
+    result_register >> result_download >> cleanup
 
 
 bike_rental_ml_dag = ml_pipeline_dag()

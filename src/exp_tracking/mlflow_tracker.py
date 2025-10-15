@@ -120,6 +120,9 @@ class MLFlowTracker:
         mlflow.set_tracking_uri(tracking_uri)
         logger.info(f"Set MLflow tracking URI to: {tracking_uri}")
         self._set_experiment()
+
+        # Create a client instance for advanced operations
+        self.client = mlflow.tracking.MlflowClient()  # type: ignore
         logger.info(
             f"Initialized {self.__class__.__name__} with experiment: {experiment_name}"
         )
@@ -566,7 +569,6 @@ class MLFlowTracker:
             - "model_uri": URI to the model artifact directory
 
         """
-        client = mlflow.tracking.MlflowClient()  # type: ignore
         model_name = str(model_name)
 
         try:
@@ -576,7 +578,7 @@ class MLFlowTracker:
             # Download all artifacts to a temporary directory
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmpdir_path = Path(tmpdir)
-                local_path = client.download_artifacts(
+                local_path = self.client.download_artifacts(
                     run_id, artifact_path, dst_path=str(tmpdir_path)
                 )
                 local_path = Path(local_path)
@@ -677,11 +679,9 @@ class MLFlowTracker:
         ... )
 
         """
-        client = mlflow.tracking.MlflowClient()  # type: ignore
-
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                local_path = client.download_artifacts(
+                local_path = self.client.download_artifacts(
                     run_id, artifact_path, dst_path=tmpdir
                 )
                 with open(local_path) as f:
@@ -718,10 +718,9 @@ class MLFlowTracker:
         ['models/xgboost/xgboost_model.json', 'models/xgboost/metadata.yaml', ...]
 
         """
-        client = mlflow.tracking.MlflowClient()  # type: ignore
 
         try:
-            artifacts = client.list_artifacts(run_id, path)
+            artifacts = self.client.list_artifacts(run_id, path)
             artifact_paths = [artifact.path for artifact in artifacts]
 
             logger.debug(f"Found {len(artifact_paths)} artifacts for run {run_id}")
@@ -737,46 +736,61 @@ class MLFlowTracker:
         model: Any,
         model_name: str,
         input_example: IntoDataFrameT | None,
-    ) -> None:
-        """Register a model with MLflow."""
+        environment: str = "staging",
+    ) -> str:
+        """Register a model with MLflow.
+
+        Returns
+        -------
+        str
+            The version number of the registered model.
+        """
+        # Ensure model_name is a string (convert from enum if necessary)
+        model_name_str = str(model_name)
+
+        input_example_df: pd.DataFrame | None = None
         if input_example is not None:
             try:
-                input_example_df: pd.DataFrame | None = (
-                    nw.from_native(input_example).to_pandas().head(2)
-                )
+                input_example_df = nw.from_native(input_example).to_pandas().head(2)
             except Exception as e:
                 logger.warning(f"Failed to convert input example: {e}")
 
         try:
+            print(f"🔧 Registering model: {model_name_str}_{environment}")
             with mlflow.start_run(run_id=run_id):  # type: ignore
                 # Determine model type
-                if "XGBOOST" in model_name:
+                if "xgboost" in model_name_str.lower():
                     model_info: ModelInfo = mlflow.xgboost.log_model(
                         xgb_model=model,
                         artifact_path="registered_model",
-                        registered_model_name=f"{model_name}_best",
+                        registered_model_name=f"{model_name_str}_{environment}",
                         input_example=input_example_df,
                     )
-                elif "LIGHTGBM" in model_name:
+                elif "lightgbm" in model_name_str.lower():
                     model_info = mlflow.lightgbm.log_model(
                         lgb_model=model,
                         artifact_path="registered_model",
-                        registered_model_name=f"{model_name}_best",
+                        registered_model_name=f"{model_name_str}_{environment}",
                         input_example=input_example_df,
                     )
-                elif "RANDOM_FOREST" in model_name:
+                elif (
+                    "random" in model_name_str.lower()
+                    or "forest" in model_name_str.lower()
+                ):
                     model_info = mlflow.sklearn.log_model(
                         sk_model=model,
                         artifact_path="registered_model",
-                        registered_model_name=f"{model_name}_best",
+                        registered_model_name=f"{model_name_str}_{environment}",
                         input_example=input_example_df,
                     )
                 else:
-                    raise ValueError(f"Unsupported model type: {model_name}")
+                    raise ValueError(f"Unsupported model type: {model_name_str}")
+
+                version = str(model_info.registered_model_version)
                 logger.info(
-                    f"✅ Registered model: {model_info.model_uri} | version: {model_info.registered_model_version}"
+                    f"✅ Registered model: {model_info.model_uri} | version: {version}"
                 )
-                return
+                return version
 
         except Exception as e:
             logger.error(f"❌ Failed to register model: {e}")

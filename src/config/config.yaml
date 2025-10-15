@@ -4,18 +4,18 @@ config:
       - { "feature": "cnt", "lags": [0, 1, 24] }
       - { "feature": "hr", "lags": [1, 24] }
       - { "feature": "temp", "lags": [1, 3] }
-      - { "feature": "hum", "lags": [1, 3] }
+      # - { "feature": "hum", "lags": [1, 3] }
     diff_features:
       - { "feature": "cnt", "diffs": [1, 2] }
       - { "feature": "hr", "diffs": [1, 24] }
       - { "feature": "temp", "diffs": [1, 2, 24] }
-      - { "feature": "hum", "diffs": [1, 2] }
+      # - { "feature": "hum", "diffs": [1, 2] }
     interaction_features:
       - { "feature_1": "temp", "feature_2": "hum", "operation": "add" }
       - { "feature_1": "hum", "feature_2": "hr", "operation": "add" }
     rolling_features:
-      - { "feature": "temp", "windows": [3, 6] }
-      - { "feature": "hum", "windows": [3, 6] }
+      - { "feature": "cnt", "windows": [3, 6] }
+      - { "feature": "hr", "windows": [3, 6] }
     drop_features:
       - "atemp"
       - "windspeed"
@@ -25,6 +25,15 @@ config:
       - "cnt"
       - "yr"
     target_col: "cnt"
+
+  business_config:
+    # Prices
+    min_price: 2000
+    max_price: 5000
+    base_price: 3000
+    # Capacity
+    max_capacity: 980
+    currency: NGN
 
   experiment_config:
     experiment_name: bike rental
@@ -48,26 +57,33 @@ config:
       test_size: 0.1
       cv_test_size: 168 # 1 week of hourly data
       n_splits: 3
+      n_startup_trials: 10 # Number of initial trials without pruning
     # Default hyperparameters for Random Forest and XGBoost
     random_forest_config:
-      n_estimators: 100
-      max_depth: 10
-      min_samples_split: 2
-      min_samples_leaf: 1
+      {
+        "n_estimators": 100,
+        "max_depth": 10,
+        "min_samples_split": 2,
+        "min_samples_leaf": 1,
+      }
     # Default hyperparameters for XGBoost
     xgboost_config:
-      objective: "reg:squarederror"
-      n_estimators: 100
-      learning_rate: 0.1
-      early_stopping_rounds: 20
-      num_boost_round: 200
+      {
+        "objective": "reg:squarederror",
+        "n_estimators": 100,
+        "learning_rate": 0.1,
+        "early_stopping_rounds": 20,
+        "num_boost_round": 200,
+      }
     lightgbm_config:
-      objective: "regression"
-      metric: ["rmse", "mae"]
-      learning_rate: 0.05
-      early_stopping_rounds: 20
-      num_boost_round: 200
-      verbose: 1
+      {
+        "objective": "regression",
+        "metric": ["rmse", "mae"],
+        "learning_rate": 0.05,
+        "early_stopping_rounds": 20,
+        "num_boost_round": 200,
+        "verbose": 1,
+      }
 
   optuna_config:
     # Hyperparameter search space for Random Forest
@@ -78,46 +94,46 @@ config:
       min_samples_leaf: [1, 5]
       max_features: [null, "sqrt", "log2"]
       bootstrap: [true, false]
-      n_trials: 2
+      n_trials: 15
     # === Hyperparameter search space for XGBoost ===
     xgboost_optuna_config:
       objective: "reg:squarederror"
       eval_metric: "rmse"
-      booster: ["gbtree", "gblinear", "dart"]
+      booster: ["gbtree", "dart"]
       # Regularization parameters
       reg_lambda: [1e-6, 1.0] # L2 regularization term on weights
       reg_alpha: [1e-6, 1.0] # L1 regularization term on weights
-      gamma: [1e-6, 2.0]
+      gamma: [1e-6, 1.0] # Minimum loss reduction
       # Tree parameters
       max_depth: [3, 10]
-      subsample: [0.5, 1.0] # Fraction of samples to be used for each tree
+      subsample: [0.6, 1.0]
       min_child_weight: [1, 10]
       # Learning task parameters
-      eta: [0.01, 0.4] # learning rate
-      n_estimators: [50, 1500]
+      eta: [0.001, 0.3]
+      num_boost_round: [100, 1500]
       # Growth
       grow_policy: ["depthwise", "lossguide"]
       # Number of trials for optimization
-      early_stopping_rounds: [10, 50]
-      n_trials: 5
+      early_stopping_rounds: [20, 50]
+      n_trials: 50
     # === Hyperparameter search space for LightGBM ===
     lightgbm_optuna_config:
       objective: "regression"
       metric: ["rmse", "mae"]
       # Regularization parameters
-      reg_lambda: [0.001, 10.0] # L2 regularization term on weights
-      reg_alpha: [0.001, 10.0] # L1 regularization term on weights
+      reg_lambda: [1e-4, 1.0] # L2 regularization term on weights
+      reg_alpha: [1e-4, 1.0] # L1 regularization term on weights
       # Learning task parameters
-      learning_rate: [0.01, 0.5] # learning rate
+      learning_rate: [0.001, 0.3]
       # Tree structure
-      num_leaves: [20, 300] # Maximum number of leaves in one tree
-      max_depth: [3, 15] # Maximum tree depth
-      min_child_samples: [5, 50]
+      num_leaves: [31, 255]
+      max_depth: [4, 12]
+      min_child_samples: [10, 50]
       # Boosting (num_boost_round is the max iterations)
-      num_boost_round: [100, 2000]
-      early_stopping_rounds: [10, 100]
+      num_boost_round: [100, 1500]
+      early_stopping_rounds: [20, 50]
       # Number of trials for optimization
-      n_trials: 5
+      n_trials: 50
 
   api_config:
     title: Bike Rental Prediction API

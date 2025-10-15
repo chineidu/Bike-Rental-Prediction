@@ -108,7 +108,7 @@ class HyperparameterTuningResult(BaseSchema):
     best_params : dict[str, Any]
         Best hyperparameters found during optimization.
     metrics : dict[str, float | None]
-        Evaluation metrics (best_rmse, mean_rmse, mean_mae, mean_mape, mean_adjusted_r2).
+        Evaluation metrics (RMSE, mean_rmse, MAE, MAPE, ADJUSTED_R2).
     model_uri : str
         MLflow URI to the best model artifact.
     predictions : list[float] | None

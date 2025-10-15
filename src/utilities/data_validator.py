@@ -536,7 +536,9 @@ def _data_validator(input_data: DataValidatorConfig) -> DataValidatorSchema:
 
     result: dict[str, Any] = {
         "data_schema": (
-            {"numeric": schema[0], "string": schema[1]} if len(schema) == 2 else schema
+            {"numeric": schema[0], "categorical": schema[1]}
+            if len(schema) == 2
+            else schema
         ),
         "data_shape": {
             "total_rows": nw_data.shape[0],

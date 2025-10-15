@@ -38,8 +38,7 @@
 #
 # Feel free to modify this file to suit your needs.
 ---
-x-airflow-common:
-  &airflow-common
+x-airflow-common: &airflow-common
   # Use custom built image instead of runtime pip installs
   # Comment out the 'image' line and uncomment 'build' to use custom Dockerfile
   # image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.0.6}
@@ -55,43 +54,44 @@ x-airflow-common:
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@airflow-db/airflow
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
-    AIRFLOW__CORE__FERNET_KEY: ''
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false' # Set to 'true' to load the example DAGs
-    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__CORE__FERNET_KEY: ""
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false" # Set to 'true' to load the example DAGs
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
     # yamllint disable rule:line-length
     # Use simple http server on scheduler for health checks
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
     # yamllint enable rule:line-length
-    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # The following line can be used to set a custom config file, stored in the local config folder
-    AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    AIRFLOW_CONFIG: "/opt/airflow/config/airflow.cfg"
     # Ensure project `include/` package is available to Airflow task runtime
-    PYTHONPATH: '/opt/airflow/include:/opt/airflow'
+    PYTHONPATH: "/opt/airflow/include:/opt/airflow"
 
     # MLflow and MinIO hosts for service discovery
     MLFLOW_HOST: mlflow
+    MLFLOW_PORT: "5001"
     AWS_S3_HOST: minio
+    MLFLOW_S3_ENDPOINT_URL: http://minio:9000
 
   volumes:
-  # Updated volume paths to include airflow directory
-  - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
-  - ${AIRFLOW_PROJ_DIR:-.}/airflow/logs:/opt/airflow/logs
-  - ${AIRFLOW_PROJ_DIR:-.}/airflow/config:/opt/airflow/config
-  - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
+    # Updated volume paths to include airflow directory
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
 
-  # Mount package so DAG tasks can import package.* modules
-  # The importable modules are located in src/
-  - ${AIRFLOW_PROJ_DIR:-.}/src:/opt/airflow/src:ro
+    # Mount package so DAG tasks can import package.* modules
+    # The importable modules are located in src/
+    - ${AIRFLOW_PROJ_DIR:-.}/src:/opt/airflow/src:ro
 
-  # Mount data directory for training data
-  - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/data
-  # Mount artifacts directory for model artifacts
-  - ${AIRFLOW_PROJ_DIR:-.}/artifacts:/opt/airflow/artifacts
+    # Mount data directory for training data
+    - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/data
+    # Mount artifacts directory for model artifacts
+    - ${AIRFLOW_PROJ_DIR:-.}/artifacts:/opt/airflow/artifacts
 
   user: "${AIRFLOW_UID:-50000}:0"
-  depends_on:
-    &airflow-common-depends-on
+  depends_on: &airflow-common-depends-on
     redis:
       condition: service_healthy
     airflow-db:
@@ -105,7 +105,7 @@ services:
       dockerfile: docker/Dockerfile.mlflow
     platform: linux/arm64
     ports:
-      - '5001:5001'
+      - "5001:5001"
     env_file:
       - .env
     environment:
@@ -139,7 +139,7 @@ services:
     volumes:
       - mlflow-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD', 'pg_isready', '-U', '${MLFLOW_DB_USER:-mlflow}']
+      test: ["CMD", "pg_isready", "-U", "${MLFLOW_DB_USER:-mlflow}"]
       interval: 5s
       retries: 5
     networks:
@@ -158,12 +158,12 @@ services:
       - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID}
       - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY}
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -217,7 +217,7 @@ services:
     expose:
       - 6379
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 30s
       retries: 50
@@ -262,7 +262,11 @@ services:
     <<: *airflow-common
     command: dag-processor
     healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      test:
+        [
+          "CMD-SHELL",
+          'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"',
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -302,7 +306,11 @@ services:
     <<: *airflow-common
     command: triggerer
     healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      test:
+        [
+          "CMD-SHELL",
+          'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"',
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -397,8 +405,8 @@ services:
 
     environment:
       <<: *airflow-common-env
-      _AIRFLOW_DB_MIGRATE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD}
       # No longer need _PIP_ADDITIONAL_REQUIREMENTS since packages are baked into the image
@@ -455,7 +463,7 @@ services:
       /app/entrypoint.sh
       "
     ports:
-      - '8501:8501'
+      - "8501:8501"
     env_file:
       - .env
     environment:
