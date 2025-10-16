@@ -89,6 +89,11 @@ class Settings(BaseSettings):
         default=SecretStr("airflow"), alias="_AIRFLOW_WWW_USER_PASSWORD"
     )
 
+    # ======= API AUTH =======
+    SECRET_KEY: SecretStr = SecretStr("your_secret_key")
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
     @field_validator("MLFLOW_PORT", "AWS_S3_PORT", "POSTGRES_PORT", mode="before")
     @classmethod
     def parse_port_fields(cls, v: str | int) -> int:
@@ -130,6 +135,29 @@ class Settings(BaseSettings):
             http://host:port
         """
         url: str = f"http://{self.AWS_S3_HOST}:{self.AWS_S3_PORT}"
+        return fix_url_credentials(url)
+
+    @property
+    def database_url(self) -> str:
+        """
+        Constructs the database connection URL.
+
+        Returns
+        -------
+        str
+            Complete database connection URL in the format:
+            - postgresql+psycopg2://user:password@host:port/dbname
+            - mysql+pymysql://user:password@host:port/dbname
+        """
+
+        url: str = (
+            f"postgresql+psycopg2://{self.POSTGRES_USER}"
+            f":{self.POSTGRES_PASSWORD.get_secret_value()}"
+            f"@{self.POSTGRES_HOST}"
+            f":{self.POSTGRES_PORT}"
+            f"/{self.POSTGRES_DB}"
+        )
+
         return fix_url_credentials(url)
 
 

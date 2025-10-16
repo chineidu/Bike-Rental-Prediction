@@ -12,8 +12,8 @@ logger = create_logger(name="health_check")
 
 @router.get("/health", status_code=status.HTTP_200_OK)
 def health_check(
-    model_manager: ModelManager = Depends(get_model_manager),
-) -> HealthCheck:  # noqa: B008
+    model_manager: ModelManager = Depends(get_model_manager),  # noqa: B008
+) -> HealthCheck:
     """
     Simple health check endpoint to verify API is operational.
 

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "apache-airflow>=3.1.0",
+    "bcrypt>=5.0.0",
     "boto3>=1.40.45",
     "holidays>=0.81",
     "httpx>=0.28.1",
@@ -16,15 +17,18 @@ dependencies = [
     "omegaconf>=2.3.0",
     "optuna>=4.5.0",
     "pandas>=2.3.2",
+    "passlib>=1.7.4",
     "pendulum>=3.1.0",
     "plotly>=6.3.0",
     "polars>=1.33.1",
     "psycopg2-binary>=2.9.10",
     "pyarrow>=21.0.0",
     "pydantic-settings>=2.10.1",
+    "python-jose>=3.5.0",
     "rich>=14.1.0",
     "scikit-learn>=1.7.2",
     "scipy>=1.14.0",
+    "sqlalchemy>=2.0.43",
     "xgboost>=3.0.5",
 ]
 

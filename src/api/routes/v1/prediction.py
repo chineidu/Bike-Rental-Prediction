@@ -14,7 +14,7 @@ from src.config import app_config
 from src.schemas import PredictedPriceResponse, RawInputSchema
 from src.utilities.utils import async_log_function_duration
 
-router = APIRouter(tags=["Prediction"])
+router = APIRouter(tags=["prediction"])
 logger = create_logger(name="prediction")
 
 

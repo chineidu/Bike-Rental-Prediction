@@ -106,27 +106,3 @@ def get_competitor_price(features: dict[str, Any]) -> float:
 
     comp_predictor = CompetitorPricePredictor(min_price=min_price, max_price=max_price)
     return comp_predictor.predict_price(features)
-
-
-if __name__ == "__main__":
-    sample_weather = {
-        "temp": 0.5,
-        "hum": 0.76,
-        "windspeed": 0.1,
-        "weather_sit": 1,
-    }
-    formatted_weather = format_weather_features(sample_weather)
-    print(formatted_weather)
-
-weights = {
-    "mnth": 0.1,
-    "holiday": 0.05,
-    "hr": 0.25,
-    "weekday": 0.05,
-    "workingday": 0.06,
-    "weathersit": 0.15,
-    "temp": 0.1,
-    "hum": 0.02,
-    "windspeed": 0.02,
-    "cnt": 0.2,
-}
