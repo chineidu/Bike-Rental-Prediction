@@ -3,7 +3,7 @@ import re
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,7 +56,10 @@ class Settings(BaseSettings):
     Settings class for managing application configuration.
     """
 
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",  # Ignore unknown env vars or to allow populating private attributes
+    )
 
     # ======= MLFlow =======
     MLFLOW_HOST: str = "localhost"
@@ -78,9 +81,13 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "mlflow"
 
     # ======= Airflow =======
-    AIRFLOW_UID: int = 50000
-    _AIRFLOW_WWW_USER_USERNAME: str = "airflow"
-    _AIRFLOW_WWW_USER_PASSWORD: SecretStr = SecretStr("airflow")
+    AIRFLOW_UID: int = Field(default=50000, alias="AIRFLOW_UID")
+    AIRFLOW_WWW_USER_USERNAME: str = Field(
+        default="airflow", alias="_AIRFLOW_WWW_USER_USERNAME"
+    )
+    AIRFLOW_WWW_USER_PASSWORD: SecretStr = Field(
+        default=SecretStr("airflow"), alias="_AIRFLOW_WWW_USER_PASSWORD"
+    )
 
     @field_validator("MLFLOW_PORT", "AWS_S3_PORT", "POSTGRES_PORT", mode="before")
     @classmethod

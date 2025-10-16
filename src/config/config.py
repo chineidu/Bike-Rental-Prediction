@@ -250,6 +250,8 @@ class APIConfig(BaseSchema):
     version: str
     status: str
     prefix: str
+    model_name_pattern: str
+    model_extensions: list[str]
     server: Server
     middleware: Middleware
 

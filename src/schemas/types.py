@@ -44,3 +44,10 @@ class MetricsDict(TypedDict):
     RMSE: float
     MAPE: float
     Adjusted_R2: float | None
+
+
+class WeatherDict(TypedDict):
+    temp: float
+    hum: float
+    windspeed: float
+    weather_sit: float

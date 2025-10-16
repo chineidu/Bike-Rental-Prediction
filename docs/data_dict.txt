@@ -1,0 +1,19 @@
+Concise data dictionary
+-----------------------
+Columns (name: type) and short notes:
+ - datetime: datetime-like — hourly timestamp (unique)
+ - hr: Int64 — hour of day (0–23)
+ - yr: Int64 — year flag (0/1)
+ - mnth: Int64 — month (1–12)
+ - season: Int64 — season code (1=Winter,2=Spring,3=Summer,4=Fall)
+ - holiday: Int64 — holiday flag (0/1)
+ - weekday: Int64 — day of week (0=Sun..6=Sat)
+ - workingday: Int64 — working day flag (0/1)
+ - weathersit: Int64 — weather code (1=clear,2=mist,3=light rain/snow,4=severe)
+ - temp, atemp, hum, windspeed: Float64 — normalized/scaled numeric features
+ - casual, registered, cnt: Int64 — user counts; cnt = casual + registered (target)
+
+Notes:
+ - No nulls reported in sample output.
+ - Forecast target: `cnt`.
+ - Treat season/weathersit/holiday/weekday/yr/workingday as categorical for encoding.

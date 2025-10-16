@@ -142,6 +142,8 @@ config:
     version: v0.0.1
     status: healthy
     prefix: /api/v1
+    model_name_pattern: "*staging*"
+    model_extensions: [".pkl", ".json", ".txt"]
 
     # Server Settings
     server:

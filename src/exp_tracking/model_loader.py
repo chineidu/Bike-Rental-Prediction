@@ -1,10 +1,10 @@
 """Utility functions for loading models and artifacts from MLflow."""
 
-import cloudpickle
-from pathlib import Path
 import json
+from pathlib import Path
 from typing import Any
 
+import joblib
 import mlflow
 from mlflow import MlflowClient  # type: ignore
 
@@ -336,7 +336,7 @@ def download_model(
     model : Any
         The trained model object to be saved. Supported model types include:
         - scikit-learn estimators (detected by "sklearn" in the model's module) —
-          serialized with cloudpickle to a .pkl file.
+          serialized with joblib to a .pkl file (with compression).
         - XGBoost models (detected by "xgboost" in the module or class names
           "Booster", "XGBClassifier", "XGBRegressor") — saved via model.save_model()
           to a .json file.
@@ -366,9 +366,8 @@ def download_model(
     if "sklearn" in model_module:
         model_filename: str = f"{model_name}_{model_version}.pkl"
         model_path: Path = models_dir / model_filename
-        with open(model_path, "wb") as fh:
-            cloudpickle.dump(model, fh)
-        logger.info("💾 Saved sklearn model using cloudpickle")
+        joblib.dump(model, model_path, compress=3)
+        logger.info("💾 Saved sklearn model using joblib (compress=3)")
 
     # Check if it's an XGBoost model
     elif "xgboost" in model_module or model_type_name in [
