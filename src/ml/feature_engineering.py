@@ -66,9 +66,7 @@ class FeatureEngineer:
         # Drop features
         return drop_features(data_df, config.drop_features)
 
-    def create_all_features(
-        self, data: IntoDataFrameT, config: FeatureConfig
-    ) -> IntoDataFrameT:
+    def transform(self, data: IntoDataFrameT, config: FeatureConfig) -> IntoDataFrameT:
         """
         Create and return a dataframe with all engineered features.
 
@@ -88,16 +86,6 @@ class FeatureEngineer:
         IntoDataFrameT
             A native dataframe-like object (the result of `self.data.to_native()`)
             containing the original input enhanced with all engineered features.
-
-        Raises
-        ------
-        AttributeError
-            If the instance does not implement `_create_all_features()`.
-        TypeError
-            If the object returned by `_create_all_features()` does not provide a
-            `to_native()` method or if `to_native()` returns an unexpected type.
-        ValueError
-            If feature construction fails due to invalid or inconsistent input data.
         """
         self.data = self._create_all_features(data=data, config=config)
         return self.data.to_native()

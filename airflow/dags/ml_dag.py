@@ -265,13 +265,13 @@ def ml_pipeline_dag() -> None:
             test_df: pl.DataFrame = pl.read_parquet(test_data_path)
             feature_eng = FeatureEngineer()
 
-            train_features_df: pl.DataFrame = feature_eng.create_all_features(
+            train_features_df: pl.DataFrame = feature_eng.transform(
                 data=train_df, config=app_config.feature_config
             )
-            val_features_df: pl.DataFrame = feature_eng.create_all_features(
+            val_features_df: pl.DataFrame = feature_eng.transform(
                 data=val_df, config=app_config.feature_config
             )
-            test_features_df: pl.DataFrame = feature_eng.create_all_features(
+            test_features_df: pl.DataFrame = feature_eng.transform(
                 data=test_df, config=app_config.feature_config
             )
             print("🚨 Saving generated features ...")

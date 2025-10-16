@@ -28,12 +28,16 @@ config:
 
   business_config:
     # Prices
-    min_price: 2000
-    max_price: 5000
-    base_price: 3000
+    min_price: 3008.50
+    max_price: 5999.99
+    base_price: 3550.50
+    base_elasticity: -1.1
     # Capacity
-    max_capacity: 980
+    max_capacity: 800
     currency: NGN
+    # Competitor
+    min_competitor_price: 3099.99
+    max_competitor_price: 6250.50
 
   experiment_config:
     experiment_name: bike rental

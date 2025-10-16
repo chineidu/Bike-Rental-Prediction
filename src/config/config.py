@@ -58,10 +58,13 @@ class BusinessConfig(BaseSchema):
     min_price: float = Field(..., description="Minimum price for bike rental")
     max_price: float = Field(..., description="Maximum price for bike rental")
     base_price: float = Field(..., description="Base price for bike rental")
+    base_elasticity: float = Field(..., description="Base price elasticity of demand")
     max_capacity: int = Field(
         ..., description="Maximum capacity of bikes available for rental"
     )
     currency: str = Field(..., description="Currency for pricing")
+    min_competitor_price: float = Field(..., description="Minimum competitor price")
+    max_competitor_price: float = Field(..., description="Maximum competitor price")
 
 
 class ExperimentTags(BaseSchema):

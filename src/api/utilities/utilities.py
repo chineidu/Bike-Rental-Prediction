@@ -301,7 +301,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
                 logger.error(f"Error during shutdown cleanup: {e}")
 
 
-def get_model_manager(request: Request) -> dict[str, Any]:
+def get_model_manager(request: Request) -> ModelManager:
     """Get the model components from the app state."""
     if (
         not hasattr(request.app.state, "model_manager")
@@ -311,7 +311,7 @@ def get_model_manager(request: Request) -> dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Model manager not loaded. Please try again later.",
         )
-    return request.app.state.model_manager.get_model()
+    return request.app.state.model_manager
 
 
 async def perform_http_warmup() -> None:

@@ -1,4 +1,5 @@
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -129,5 +130,52 @@ class HealthCheck(BaseSchema):
     Health check response model.
     """
 
-    status: str = "healthy"
-    version: str = "0.1.0"
+    status: str = ""
+    api_name: str = ""
+    version: str = ""
+    model_status: bool = False
+
+
+class CapacityComponents(BaseSchema):
+    """Capacity components model."""
+
+    max_capacity: int | None = Field(
+        ..., description="Maximum capacity of bikes available for rental"
+    )
+    current_utilization: int | None = Field(
+        ..., description="Current number of bikes rented out"
+    )
+    available_bikes: int | None = Field(
+        ..., description="Number of bikes currently available for rental"
+    )
+    utilization_rate: float | None = Field(
+        ..., description="Current utilization rate (0 to 1)"
+    )
+
+
+class PriceComponents(BaseSchema):
+    """Price components model."""
+
+    price_multiplier: float = Field(..., description="Price multiplier")
+    surge: float = Field(..., description="Surge amount")
+    discount: float = Field(..., description="Discount amount")
+    base_price: float = Field(default=..., description="Base price for bike rental")
+    competitor_price: float | None = Field(default=None, description="Competitor price")
+    min_price: float = Field(..., description="Minimum price")
+    max_price: float = Field(..., description="Maximum price")
+
+
+class PredictedPriceResponse(BaseSchema):
+    """
+    Predicted price response model.
+    """
+
+    status: Literal["success", "failed"] | None = Field(default=None)
+    currency: Literal["NGN", "USD"] = Field(default="NGN")
+    capacity_components: CapacityComponents = Field(default_factory=dict)
+    price_components: PriceComponents = Field(default_factory=dict)
+    final_calculations: dict[str, Any] = Field(default_factory=dict)
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now().isoformat(timespec="seconds")
+    )
+    error: str | None = Field(default=None)

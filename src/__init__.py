@@ -28,6 +28,7 @@ def create_logger(
     # Create logger
     logger = logging.getLogger(name)
     logger.setLevel(log_level)
+    logger.propagate = False  # Don't propagate to parent loggers
 
     # Clear any existing handlers
     logger.handlers.clear()

@@ -1,7 +1,13 @@
+import time
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import joblib
+
+from src import create_logger
+
+logger = create_logger(name="utils")
 
 
 def get_vibrant_color(correlation: float) -> str:
@@ -192,3 +198,77 @@ def get_latest_model_path(
 
     # Return the most recently modified file
     return max(matching_files, key=lambda p: p.stat().st_mtime)
+
+
+def log_function_duration(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to log the duration of a function execution.
+
+    Parameters
+    ----------
+    func : Callable[..., Any]
+        The function to be decorated.
+
+    Returns
+    -------
+    Callable[..., Any]
+        The wrapped function with duration logging.
+    """
+
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        start_time = time.perf_counter()
+
+        # Call the original function
+        result = func(*args, **kwargs)
+
+        print(
+            f"Function {func.__name__!r} executed in {time.perf_counter() - start_time:.4f} seconds"  # type: ignore
+        )  # type: ignore
+
+        return result
+
+    return wrapper
+
+
+def async_log_function_duration(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to log the duration of an asynchronous function execution.
+
+    Parameters
+    ----------
+    func : Callable[..., Any]
+        The asynchronous function to be decorated.
+
+    Returns
+    -------
+    Callable[..., Any]
+        The wrapped asynchronous function with duration logging.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        start_time = time.perf_counter()
+        func_name = getattr(func, "__name__", "unknown")
+
+        try:
+            logger.debug(f"Starting async function {func_name!r}")
+
+            # Await the original async function
+            result = await func(*args, **kwargs)
+
+            elapsed_time = time.perf_counter() - start_time
+            logger.info(
+                f"Async function {func_name!r} completed in {elapsed_time:.4f} seconds"
+            )
+
+            return result
+
+        except Exception as e:
+            elapsed_time = time.perf_counter() - start_time
+            logger.error(
+                f"Async function {func_name!r} failed after {elapsed_time:.4f} seconds: {e}"
+            )
+            raise
+
+    return wrapper

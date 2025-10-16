@@ -50,4 +50,4 @@ class WeatherDict(TypedDict):
     temp: float
     hum: float
     windspeed: float
-    weather_sit: float
+    weathersit: float
