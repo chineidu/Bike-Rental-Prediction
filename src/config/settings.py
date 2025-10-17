@@ -74,11 +74,26 @@ class Settings(BaseSettings):
     AWS_DEFAULT_REGION: str = "us-east-1"
 
     # ======= DB =======
+    # Airflow
+    AIRFLOW_DB_HOST: str = "localhost"
+    AIRFLOW_DB_PORT: int = 5432
+    AIRFLOW_DB_USER: str = "airflow"
+    AIRFLOW_DB_PASSWORD: SecretStr = SecretStr("airflow")
+    AIRFLOW_DB_NAME: str = "airflow"
+
+    # MLflow DB
     POSTGRES_HOST: str = "localhost"
-    POSTGRES_PORT: int = 5432
+    POSTGRES_PORT: int = 5433
     POSTGRES_USER: str = "mlflow"
     POSTGRES_PASSWORD: SecretStr = SecretStr("mlflow")
     POSTGRES_DB: str = "mlflow"
+
+    # API DB (separate database for user/auth tables)
+    API_DB_HOST: str = "localhost"
+    API_DB_PORT: int = 5433
+    API_DB_USER: str = "mlflow"
+    API_DB_PASSWORD: SecretStr = SecretStr("mlflow")
+    API_DB_NAME: str = "bikerental_api"
 
     # ======= Airflow =======
     AIRFLOW_UID: int = Field(default=50000, alias="AIRFLOW_UID")
@@ -94,7 +109,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    @field_validator("MLFLOW_PORT", "AWS_S3_PORT", "POSTGRES_PORT", mode="before")
+    @field_validator(
+        "MLFLOW_PORT", "AWS_S3_PORT", "POSTGRES_PORT", "AIRFLOW_DB_PORT", mode="before"
+    )
     @classmethod
     def parse_port_fields(cls, v: str | int) -> int:
         """Parses port fields to ensure they are integers."""
@@ -140,24 +157,43 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """
-        Constructs the database connection URL.
+        Constructs the API database connection URL.
+
+        This is the database used for user authentication and API-specific tables.
+        It's separate from MLflow's database to avoid conflicts.
 
         Returns
         -------
         str
             Complete database connection URL in the format:
-            - postgresql+psycopg2://user:password@host:port/dbname
-            - mysql+pymysql://user:password@host:port/dbname
+            postgresql+psycopg2://user:password@host:port/dbname
         """
-
         url: str = (
-            f"postgresql+psycopg2://{self.POSTGRES_USER}"
-            f":{self.POSTGRES_PASSWORD.get_secret_value()}"
-            f"@{self.POSTGRES_HOST}"
-            f":{self.POSTGRES_PORT}"
-            f"/{self.POSTGRES_DB}"
+            f"postgresql+psycopg2://{self.API_DB_USER}"
+            f":{self.API_DB_PASSWORD.get_secret_value()}"
+            f"@{self.API_DB_HOST}"
+            f":{self.API_DB_PORT}"
+            f"/{self.API_DB_NAME}"
         )
+        return fix_url_credentials(url)
 
+    @property
+    def mlflow_database_url(self) -> str:
+        """
+        Constructs the MLflow database connection URL.
+
+        Returns
+        -------
+        str
+            Complete database connection URL for MLflow tracking.
+        """
+        url: str = (
+            f"postgresql+psycopg2://{self.MLFLOW_DB_USER}"
+            f":{self.MLFLOW_DB_PASSWORD.get_secret_value()}"
+            f"@{self.MLFLOW_DB_HOST}"
+            f":{self.MLFLOW_DB_PORT}"
+            f"/{self.MLFLOW_DB_NAME}"
+        )
         return fix_url_credentials(url)
 
 

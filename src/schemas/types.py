@@ -51,3 +51,14 @@ class WeatherDict(TypedDict):
     hum: float
     windspeed: float
     weathersit: float
+
+
+class UserRole(str, Enum):
+    """Enum for different user roles."""
+
+    ADMIN = "admin"
+    USER = "user"
+    MODERATOR = "moderator"
+
+    def __str__(self) -> str:
+        return str(self.value)

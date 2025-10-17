@@ -1,3 +1,5 @@
+alembic>=1.16.5
+bcrypt>=5.0.0
 boto3>=1.40.45
 holidays>=0.81
 httpx>=0.28.1
@@ -8,6 +10,7 @@ numpy>=2.0
 omegaconf>=2.3.0
 optuna>=4.5.0
 pandas>=2.3.2
+passlib>=1.7.4
 pendulum>=3.1.0
 plotly>=6.3.0
 polars>=1.33.1
@@ -18,3 +21,6 @@ rich>=14.1.0
 scikit-learn>=1.7.2
 scipy>=1.14.0
 xgboost>=3.0.5
+
+# Don't install this to prevent conflicts! Airflow already has sqlalchemy
+# sqlalchemy>=2.0.43

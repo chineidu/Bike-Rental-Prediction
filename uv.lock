@@ -478,6 +478,7 @@ name = "bike-rental-prediction"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "apache-airflow" },
     { name = "bcrypt" },
     { name = "boto3" },
@@ -514,6 +515,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.16.5" },
     { name = "apache-airflow", specifier = ">=3.1.0" },
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "boto3", specifier = ">=1.40.45" },

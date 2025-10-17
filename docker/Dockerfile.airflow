@@ -1,5 +1,5 @@
 # Use the official Apache Airflow image as base
-FROM apache/airflow:3.0.6
+FROM apache/airflow:3.1.0
 
 # Switch to root user to install system dependencies required by some ML libs
 USER root
@@ -14,7 +14,7 @@ RUN apt-get update \
 # Switch back to airflow user
 USER airflow
 
-# Install Python dependencies
+# Then install project requirements
 COPY docker/requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt
 

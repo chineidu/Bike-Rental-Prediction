@@ -29,7 +29,7 @@ repos:
         types_or:
           - python
           - pyi
-        exclude: ^tests/
+        exclude: ^(tests/|alembic/)
         args:
           - --ignore-missing-imports
           - --disallow-any-generics

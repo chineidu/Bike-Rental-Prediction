@@ -14,6 +14,9 @@ This project optimizes a city-wide bike-sharing platform's dynamic pricing. It u
   - [Business Objectives](#business-objectives)
   - [Key Deliverables](#key-deliverables)
   - [Data Generator](#data-generator)
+  - [Documentation](#documentation)
+    - [Database & Migrations](#database--migrations)
+    - [Project Docs](#project-docs)
 
 <!-- /TOC -->
 ## Installation
@@ -68,3 +71,16 @@ This project includes a data generator script (`data_gen.py`) that creates reali
 For detailed year compatibility information, see [YEAR_COMPATIBILITY.md](docs/YEAR_COMPATIBILITY.md).
 
 For usage examples, see [README_data_gen.md](docs/README_data_gen.md).
+
+## Documentation
+
+### Database & Migrations
+
+- **[Alembic Migration Guide](docs/ALEMBIC_GUIDE.md)** - Complete guide for database migrations with Alembic
+- **[Environment Variables Reference](docs/ENV_VARS.md)** - All environment variables explained
+- **[Dynamic Database Configuration](docs/DYNAMIC_DB_CONFIG.md)** - How to customize database names
+
+### Project Docs
+
+- **[Year Compatibility](docs/YEAR_COMPATIBILITY.md)** - Data generator year support
+- **[Data Generation](docs/README_data_gen.md)** - Using the data generator

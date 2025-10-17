@@ -133,13 +133,19 @@ services:
       - .env
     environment:
       # Scoped env vars for MLflow DB to avoid collisions with Airflow DB
-      - POSTGRES_USER=${MLFLOW_DB_USER:-mlflow}
-      - POSTGRES_PASSWORD=${MLFLOW_DB_PASSWORD:-mlflow}
-      - POSTGRES_DB=${MLFLOW_DB_NAME:-mlflow}
+      - POSTGRES_USER=${POSTGRES_USER:-mlflow}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mlflow}
+      - POSTGRES_DB=${POSTGRES_DB:-mlflow}
+      # API database name for init script
+      - API_DB_NAME=${API_DB_NAME:-bikerental_api}
+    ports:
+      - "5433:5432" # Expose MLflow DB to host on port 5433
     volumes:
       - mlflow-db-volume:/var/lib/postgresql/data
+      # Mount initialization script to create API database or other needed DBs
+      - ./docker/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${MLFLOW_DB_USER:-mlflow}"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-mlflow}"]
       interval: 5s
       retries: 5
     networks:
@@ -195,9 +201,11 @@ services:
   airflow-db:
     image: postgres:17.5-bookworm
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow}
+    ports:
+      - "5432:5432" # Expose Airflow DB to host on default PostgreSQL port
     volumes:
       - airflow-db-volume:/var/lib/postgresql/data
     healthcheck:
