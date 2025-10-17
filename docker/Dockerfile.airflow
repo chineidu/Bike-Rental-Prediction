@@ -14,12 +14,13 @@ RUN apt-get update \
 # Switch back to airflow user
 USER airflow
 
-# Then install project requirements
+# Copy ONLY requirements first (for better layer caching)
+# This layer will only rebuild if requirements.txt changes
 COPY docker/requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt
 
-# Configure the Package directory
-# Copy the include directory into the image
+# Copy source code LAST (changes frequently, but won't invalidate above layers)
+# This layer rebuilds on every code change, but it's fast (just copying files)
 COPY --chown=airflow:0 src /opt/airflow/src
 
 # Set PYTHONPATH to include the package directory

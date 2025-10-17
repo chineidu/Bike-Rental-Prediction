@@ -25,7 +25,7 @@ pre-commit-run:
 pre-commit-refresh: pre-commit-update pre-commit-run
 
 # ========== Database Migrations (Alembic) ==========
-.PHONY: db-init db-migrate db-upgrade db-downgrade db-current db-history db-reset db-seed
+.PHONY: db-init db-migrate db-upgrade db-downgrade db-current db-history db-reset db-seed db-stamp
 
 # Initialize database (migrate + seed)
 db-init: db-upgrade db-seed
@@ -34,51 +34,67 @@ db-init: db-upgrade db-seed
 # Create a new migration
 db-migrate:
 	@read -p "Enter migration message: " msg; \
-	alembic revision --autogenerate -m "$$msg"
+	uv run alembic revision --autogenerate -m "$$msg"
 
 # Apply pending migrations
 db-upgrade:
 	@echo "⬆️  Applying database migrations..."
-	alembic upgrade head
+	uv run alembic upgrade head
 
 # Create database with initial data (roles, etc.)
 db-seed:
 	@echo "🌱 Seeding database with initial data..."
 	uv run -m src.api.setup
 
+# Mark database as current without running migrations (for existing databases)
+db-stamp:
+	@echo "📌 Stamping database with current migration version..."
+	uv run alembic stamp head
+	@echo "✅ Database marked as up-to-date"
+
 # Rollback last migration
 db-downgrade:
 	@echo "⬇️  Rolling back last migration..."
-	alembic downgrade -1
+	uv run alembic downgrade -1
 
 # Show current migration version
 db-current:
 	@echo "📍 Current database version:"
-	alembic current
+	uv run alembic current
 
 # Show migration history
 db-history:
 	@echo "📜 Migration history:"
-	alembic history --verbose
+	uv run alembic history --verbose
 
 # Reset database (WARNING: destructive)
 db-reset:
 	@echo "⚠️  WARNING: This will drop all tables!"
 	@read -p "Are you sure? (y/N): " confirm; \
 	if [ "$$confirm" = "y" ]; then \
-		alembic downgrade base; \
+		uv run alembic downgrade base; \
 		echo "✅ Database reset complete"; \
 	else \
 		echo "❌ Aborted"; \
 	fi
 
 # ========== Docker Compose ==========
-.PHONY: compose-up compose-down compose-down-orphans compose-down-volumes compose-logs compose-ps compose-restart
+.PHONY: compose-up compose-down compose-down-orphans compose-down-volumes compose-logs compose-ps compose-restart compose-build
 
 compose-up: compose-down
 	@echo "🚀 Starting Docker Compose services..."
-	docker compose -f ${COMPOSE_FILE} up --build -d
+	docker compose -f ${COMPOSE_FILE} up -d
 	@echo "✅ Services started. Use 'make compose-logs' to view logs."
+
+compose-build:
+	@echo "🔨 Building Docker images..."
+	docker compose -f ${COMPOSE_FILE} build
+	@echo "✅ Build complete. Use 'make compose-up' to start services."
+
+compose-up-build: compose-down
+	@echo "🔨 Building and starting Docker Compose services..."
+	docker compose -f ${COMPOSE_FILE} up --build -d
+	@echo "✅ Services started with fresh build."
 
 compose-down:
 	@echo "🛑 Stopping Docker Compose services..."
@@ -132,18 +148,22 @@ help:
 	@echo "  make db-migrate           Create new migration (autogenerate)"
 	@echo "  make db-upgrade           Apply pending migrations"
 	@echo "  make db-seed              Seed initial data (roles)"
+	@echo "  make db-stamp             Mark DB as current (for existing tables)"
 	@echo "  make db-downgrade         Rollback last migration"
 	@echo "  make db-current           Show current migration version"
 	@echo "  make db-history           Show migration history"
 	@echo "  make db-reset             Drop all tables (⚠️  destructive)"
 	@echo ""
 	@echo "🐳 DOCKER COMPOSE"
-	@echo "  make compose-up           Build and start services"
+	@echo "  make compose-up           Start services (fast, uses cache)"
+	@echo "  make compose-build        Build images only"
+	@echo "  make compose-up-build     Build and start services (slower)"
 	@echo "  make compose-down         Stop services"
 	@echo "  make compose-down-orphans Stop services and remove orphans"
 	@echo "  make compose-down-volumes Stop services and remove volumes (⚠️  destructive)"
 	@echo "  make compose-logs         Follow all service logs"
 	@echo "  make compose-ps           Show running services"
+	@echo "  make compose-restart      Restart all services"
 	@echo ""
 	@echo "🔧 DEVELOPMENT"
 	@echo "  make dev-setup            Complete development setup"
@@ -172,7 +192,7 @@ dev-setup: pre-commit-install
 	@echo "  2. Run 'make compose-up' to start services"
 	@echo "  3. Run 'make db-init' to initialize database"
 
-api-run:
+api-run: db-init
 	@echo "🚀 Starting FastAPI application..."
 	uv run -m src.api.app
 

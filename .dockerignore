@@ -1,0 +1,84 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.mypy_cache
+.ruff_cache
+
+# Virtual environments
+.venv
+venv
+ENV
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation
+docs
+*.md
+LICENSE
+
+# Notebooks
+notebooks
+*.ipynb
+
+# Data & artifacts (don't copy into image)
+data
+artifacts
+reports
+*.csv
+*.parquet
+*.pkl
+*.joblib
+
+# Docker
+docker-compose.yaml
+docker-compose.yml
+Dockerfile*
+.dockerignore
+
+# Airflow (only copy what's needed via explicit COPY)
+airflow/logs
+airflow/plugins
+airflow/config
+
+# Environment & config
+.env
+.env.*
+!.env.example
+
+# Tests
+tests
+test_*.py
+*_test.py
+
+# Misc
+Makefile
+*.log
+.pre-commit-config.yaml
+pyproject.toml
+uv.lock

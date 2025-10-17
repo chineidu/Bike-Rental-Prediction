@@ -2,8 +2,8 @@
 Copied from: https://github.com/airscholar/astro-salesforecast/blob/main/include/utils/mlflow_s3_utils.py
 """
 
-import os
 import shutil
+from pathlib import Path
 
 import boto3
 import mlflow
@@ -55,10 +55,13 @@ class MLflowS3Manager:
         """
         try:
             # Construct S3 key
+            local_file = Path(local_path)
             if artifact_path:
-                s3_key: str = f"{run_id[:2]}/{run_id[2:4]}/{run_id}/artifacts/{artifact_path}/{os.path.basename(local_path)}"
+                s3_key: str = f"{run_id[:2]}/{run_id[2:4]}/{run_id}/artifacts/{artifact_path}/{local_file.name}"
             else:
-                s3_key = f"{run_id[:2]}/{run_id[2:4]}/{run_id}/artifacts/{os.path.basename(local_path)}"
+                s3_key = (
+                    f"{run_id[:2]}/{run_id[2:4]}/{run_id}/artifacts/{local_file.name}"
+                )
 
             # Upload to S3
             self.s3_client.upload_file(local_path, self.bucket_name, s3_key)
@@ -113,24 +116,26 @@ class MLflowS3Manager:
             client = mlflow.tracking.MlflowClient()  # type: ignore
 
             # Download all artifacts locally
-            local_dir = f"/tmp/mlflow_sync/{run_id}"
-            if os.path.exists(local_dir):
+            local_dir = Path(f"/tmp/mlflow_sync/{run_id}")
+            if local_dir.exists():
                 shutil.rmtree(local_dir)
 
-            artifacts_dir = client.download_artifacts(run_id, "", dst_path=local_dir)
+            artifacts_dir = client.download_artifacts(
+                run_id, "", dst_path=str(local_dir)
+            )
+            artifacts_path = Path(artifacts_dir)
 
             # Upload each file to S3
-            for root, _, files in os.walk(artifacts_dir):
-                for file in files:
-                    local_file = os.path.join(root, file)
+            for file_path in artifacts_path.rglob("*"):
+                if file_path.is_file():
                     # Calculate relative path
-                    relative_path = os.path.relpath(local_file, artifacts_dir)
+                    relative_path = file_path.relative_to(artifacts_path)
 
                     # Upload to S3
                     s3_key = (
                         f"{run_id[:2]}/{run_id[2:4]}/{run_id}/artifacts/{relative_path}"
                     )
-                    self.s3_client.upload_file(local_file, self.bucket_name, s3_key)
+                    self.s3_client.upload_file(str(file_path), self.bucket_name, s3_key)
                     logger.info(f"Synced {relative_path} to S3")
 
             # Clean up temp directory
