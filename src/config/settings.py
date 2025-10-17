@@ -6,6 +6,10 @@ from dotenv import load_dotenv
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src import create_logger
+
+logger = create_logger(name="settings")
+
 
 def fix_url_credentials(url: str) -> str:
     """
@@ -39,15 +43,15 @@ def fix_url_credentials(url: str) -> str:
 
             # Extract scheme name for logging
             scheme_name = scheme.rstrip("://")  # noqa: B005
-            print(f"Fixed {scheme_name!r} URL encoding for special characters")
+            logger.debug(f"Fixed {scheme_name!r} URL encoding for special characters")
 
             return fixed_url
 
-        print("WARNING: No regex match found!")
+        logger.debug("WARNING: No regex match found!")
         return url
 
     except Exception as e:
-        print(f"Could not fix URL: {e}")
+        logger.warning(f"Could not fix URL: {e}")
         return url
 
 
