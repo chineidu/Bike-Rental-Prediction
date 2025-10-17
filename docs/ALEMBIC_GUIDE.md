@@ -8,13 +8,25 @@ This guide explains how to use Alembic for database migrations without breaking 
 - [Database Migration Guide with Alembic](#database-migration-guide-with-alembic)
   - [Table of Contents](#table-of-contents)
   - [Architecture Overview](#architecture-overview)
+  - [Initial Alembic Setup First Time - Already Done](#initial-alembic-setup-first-time---already-done)
+    - [What Was Done](#what-was-done)
+      - [Step 1: Install Alembic](#step-1-install-alembic)
+      - [Step 2: Initialize Alembic](#step-2-initialize-alembic)
+      - [Step 3: Configured alembic/env.py](#step-3-configured-alembicenvpy)
+      - [Step 4: Updated alembic.ini](#step-4-updated-alembicini)
+      - [Step 5: Created database init script](#step-5-created-database-init-script)
+      - [Step 6: Created initial migration](#step-6-created-initial-migration)
+      - [Step 7: Created seed script src/api/setup.py](#step-7-created-seed-script-srcapisetuppy)
   - [Setup](#setup)
-    - [Configure Environment Variables Optional](#configure-environment-variables-optional)
-    - [Start Fresh Database](#start-fresh-database)
-    - [Initialize Alembic First Time Only](#initialize-alembic-first-time-only)
-    - [Apply Migrations and Seed Data](#apply-migrations-and-seed-data)
+    - [Step 0. Configure Environment Variables Optional](#step-0-configure-environment-variables-optional)
+    - [Step 1. Start Fresh Database](#step-1-start-fresh-database)
+    - [Step 2. Initialize Alembic First Time Only](#step-2-initialize-alembic-first-time-only)
+    - [Step 3. Apply Migrations and Seed Data](#step-3-apply-migrations-and-seed-data)
   - [Daily Workflow](#daily-workflow)
     - [Adding a New Table or Column](#adding-a-new-table-or-column)
+      - [Step 1. Modify your models in src/db/models.py](#step-1-modify-your-models-in-srcdbmodelspy)
+      - [Step 2. Generate migration](#step-2-generate-migration)
+      - [Step 3. Review the generated migration in alembic/versions/](#step-3-review-the-generated-migration-in-alembicversions)
     - [Checking Migration Status](#checking-migration-status)
     - [Rolling Back a Migration](#rolling-back-a-migration)
   - [Common Commands](#common-commands)
@@ -58,9 +70,118 @@ PostgreSQL Instance (mlflow-db:5432)
 - No conflicts because they use different databases
 - Database names are configurable in `.env` file
 
+## Initial Alembic Setup (First Time - Already Done)
+
+**⚠️ Important:** This section documents how Alembic was initially configured in this project for reproducibility. **You don't need to run these commands** unless you're:
+
+- Setting up Alembic in a completely new project
+- Understanding how this project was bootstrapped
+- Recreating the setup from scratch
+
+If you're just using this project, skip to [Setup](#setup) section.
+
+---
+
+### What Was Done
+
+These are the exact commands and configurations that were used to set up Alembic from scratch:
+
+#### Step 1: Install Alembic
+
+```bash
+# Added to pyproject.toml dependencies
+uv add alembic
+```
+
+#### Step 2: Initialize Alembic
+
+```bash
+# Created alembic/ directory and alembic.ini config
+alembic init alembic
+```
+
+This created:
+
+- `alembic.ini` - Main configuration file
+- `alembic/` directory with:
+  - `env.py` - Environment configuration
+  - `script.py.mako` - Migration template
+  - `versions/` - Directory for migration files
+
+#### Step 3: Configured `alembic/env.py`
+
+Modified to:
+
+- Import models from `src.db.models`
+- Read database URL from environment variables
+- Point to API database (not MLflow database)
+
+Key changes made to `alembic/env.py`:
+
+```python
+from src.db.models import Base
+from src.config.settings import refresh_settings
+
+# Get settings
+settings = refresh_settings()
+
+# Set target metadata
+target_metadata = Base.metadata
+
+# Database URL from environment
+def get_url():
+    return (
+        f"postgresql://{settings.API_DB_USER}:{settings.API_DB_PASSWORD}"
+        f"@{settings.API_DB_HOST}:{settings.API_DB_PORT}/{settings.API_DB_NAME}"
+    )
+
+config.set_main_option("sqlalchemy.url", get_url())
+```
+
+#### Step 4: Updated `alembic.ini`
+
+```ini
+# Set script location
+script_location = alembic
+
+# Database URL will be set programmatically in env.py
+# sqlalchemy.url = postgresql://user:pass@localhost/dbname
+```
+
+#### Step 5: Created database init script
+
+Created `docker/init-databases.sh` to automatically create both databases:
+
+```bash
+#!/bin/bash
+set -e
+
+API_DB_NAME="${API_DB_NAME:-bikerental_api}"
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<EOSQL
+    CREATE DATABASE "$API_DB_NAME";
+    GRANT ALL PRIVILEGES ON DATABASE "$API_DB_NAME" TO $POSTGRES_USER;
+EOSQL
+```
+
+#### Step 6: Created initial migration
+
+```bash
+# Generate first migration from existing models
+make db-migrate
+# Message: "Initial schema with users and roles tables"
+
+# Apply migration
+make db-upgrade
+```
+
+#### Step 7: Created seed script `src/api/setup.py`
+
+Script to populate initial roles after migrations run.
+
 ## Setup
 
-### 0. Configure Environment Variables (Optional)
+### Step 0. Configure Environment Variables (Optional)
 
 You can customize database names in `.env`:
 
@@ -78,7 +199,7 @@ API_DB_PASSWORD=mlflow
 
 **Note:** If you change `API_DB_NAME`, update it before running `docker-compose up` for the first time.
 
-### 1. Start Fresh Database
+### Step 1. Start Fresh Database
 
 ```bash
 # Stop containers and remove volumes
@@ -96,7 +217,7 @@ The init script (`docker/init-databases.sh`) will automatically create:
 - `${POSTGRES_DB}` database for MLflow
 - `${API_DB_NAME}` database for your API
 
-### 2. Initialize Alembic (First Time Only)
+### Step 2. Initialize Alembic (First Time Only)
 
 Create the initial migration for your existing models:
 
@@ -115,7 +236,7 @@ This will:
 - Generate migration script in `alembic/versions/`
 - Detect `DBUser`, `DBRole`, and `user_roles` tables
 
-### 3. Apply Migrations and Seed Data
+### Step 3. Apply Migrations and Seed Data
 
 ```bash
 # Complete setup (migrations + seed data)
@@ -137,7 +258,7 @@ make db-seed     # 2. Add initial data (roles)
 
 ### Adding a New Table or Column
 
-1. **Modify your models** in `src/db/models.py`:
+#### Step 1. **Modify your models** in `src/db/models.py`
 
 ```python
 class DBUser(Base):
@@ -149,14 +270,14 @@ class DBUser(Base):
     # ... rest of fields
 ```
 
-2. **Generate migration**:
+#### Step 2. **Generate migration**
 
 ```bash
 make db-migrate
 # Enter message: "Add phone_number to users table"
 ```
 
-3. **Review the generated migration** in `alembic/versions/`:
+#### Step 3. **Review the generated migration** in `alembic/versions/`
 
 ```python
 def upgrade() -> None:
@@ -168,7 +289,7 @@ def downgrade() -> None:
     op.drop_column('users', 'phone_number')
 ```
 
-4. **Apply migration**:
+#### Step 4. **Apply migration**
 
 ```bash
 make db-upgrade

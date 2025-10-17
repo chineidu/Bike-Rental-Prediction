@@ -7,9 +7,15 @@ This project optimizes a city-wide bike-sharing platform's dynamic pricing. It u
 
 - [Bike-Rental-Prediction](#bike-rental-prediction)
   - [Table of Contents](#table-of-contents)
-  - [Installation](#installation)
-    - [Install UV](#install-uv)
-    - [Virtual Environment Management](#virtual-environment-management)
+  - [Quick Start](#quick-start)
+    - [Option 1: Automated Setup Recommended](#option-1-automated-setup-recommended)
+    - [Option 2: Manual Setup](#option-2-manual-setup)
+      - [Step 1: Install UV](#step-1-install-uv)
+      - [Step 2: Setup development environment](#step-2-setup-development-environment)
+      - [Step 3: Configure environment](#step-3-configure-environment)
+      - [Step 4: Start services](#step-4-start-services)
+      - [Step 5: Initialize database](#step-5-initialize-database)
+      - [Step 6: View available commands](#step-6-view-available-commands)
   - [Problem Statement](#problem-statement)
   - [Business Objectives](#business-objectives)
   - [Key Deliverables](#key-deliverables)
@@ -19,19 +25,59 @@ This project optimizes a city-wide bike-sharing platform's dynamic pricing. It u
     - [Project Docs](#project-docs)
 
 <!-- /TOC -->
-## Installation
+## Quick Start
 
-### Install UV
-
-- Install UV for dependency management [UV Installation Guide](https://docs.astral.sh/uv/getting-started/installation/#__tabbed_1_1).
-
-### Virtual Environment Management
+### Option 1: Automated Setup (Recommended)
 
 ```sh
-uv venv -p "3.12"
+# Complete setup in one command
+make quickstart
+```
 
-# Install dependencies
+This will:
+
+1. Set up development environment
+2. Start Docker services
+3. Initialize database with migrations and seed data
+4. Show you all running services
+
+### Option 2: Manual Setup
+
+#### Step 1: Install UV
+
+[UV Installation Guide](https://docs.astral.sh/uv/getting-started/installation/#__tabbed_1_1)
+
+#### Step 2: Setup development environment
+
+```sh
+make dev-setup
+# or manually:
 uv sync
+```
+
+#### Step 3: Configure environment
+
+```sh
+cp .env.example .env
+# Edit .env with your settings
+```
+
+#### Step 4: Start services
+
+```sh
+make compose-up
+```
+
+#### Step 5: Initialize database
+
+```sh
+make db-init
+```
+
+#### Step 6: View available commands
+
+```sh
+make help
 ```
 
 ## Problem Statement
