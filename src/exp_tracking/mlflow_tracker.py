@@ -20,6 +20,7 @@ from narwhals.typing import IntoDataFrameT
 
 from src import create_logger
 from src.exceptions import MLFlowConnectionError, MLFlowError
+from src.exp_tracking.mlflow_s3_utils import MLflowS3Manager
 from src.schemas.types import ArtifactsType, ModelType
 
 logger = create_logger("mlflow_tracker")
@@ -820,11 +821,9 @@ class MLFlowTracker:
             # Sync artifacts to S3 if run was successful
             if run_id and status == "FINISHED":
                 try:
-                    # TODO: Implement S3 sync logic here
-                    # from .mlflow_s3_utils import MLflowS3Manager
-                    # s3_manager = MLflowS3Manager()
-                    # s3_manager.sync_mlflow_artifacts_to_s3(run_id)
-                    # logger.info(f"✅ Synced artifacts to S3 for run {run_id}")
+                    s3_manager = MLflowS3Manager()
+                    s3_manager.sync_mlflow_artifacts_to_s3(run_id)
+                    logger.info(f"✅ Synced artifacts to S3 for run {run_id}")
                     pass
                 except MLFlowError as e:
                     logger.warning(f"❌ Failed to sync artifacts to S3: {e}")
