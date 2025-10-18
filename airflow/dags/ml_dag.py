@@ -84,10 +84,6 @@ dag_params: dict[str, Param] = {
         default="staging",
         description="Environment for the model (e.g., staging, production)",
     ),
-    "model_version": Param(
-        default="2",
-        description="Version for the model",
-    ),
 }
 
 

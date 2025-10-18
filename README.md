@@ -7,6 +7,7 @@ This project optimizes a city-wide bike-sharing platform's dynamic pricing. It u
 
 - [Bike-Rental-Prediction](#bike-rental-prediction)
   - [Table of Contents](#table-of-contents)
+  - [Architecture Diagram](#architecture-diagram)
   - [Quick Start](#quick-start)
     - [Option 1: Automated Setup Recommended](#option-1-automated-setup-recommended)
     - [Option 2: Manual Setup](#option-2-manual-setup)
@@ -17,14 +18,19 @@ This project optimizes a city-wide bike-sharing platform's dynamic pricing. It u
       - [Step 5: Initialize database](#step-5-initialize-database)
       - [Step 6: View available commands](#step-6-view-available-commands)
   - [Problem Statement](#problem-statement)
-  - [Business Objectives](#business-objectives)
-  - [Key Deliverables](#key-deliverables)
-  - [Data Generator](#data-generator)
-  - [Documentation](#documentation)
-    - [Database & Migrations](#database--migrations)
-    - [Project Docs](#project-docs)
+  - [Objectives](#objectives)
+  - [Future Enhancements](#future-enhancements)
 
 <!-- /TOC -->
+
+## Architecture Diagram
+
+The architecture diagram shows the detailed interactions and dependencies between internal modules.
+
+![Architecture Diagram](./data/static/BikeRental-ComponentsDiagram.png)
+
+For more details, see the [System Architecture Documentation](docs/ARCHITECTURE.md).
+
 ## Quick Start
 
 ### Option 1: Automated Setup (Recommended)
@@ -90,43 +96,17 @@ These forecasts will drive real-time pricing adjustments to:
 - Maximize revenue during surges
 - Stimulate demand during slow periods
 
-## Business Objectives
+## Objectives
 
 Develop a real-time machine learning model that forecasts hourly bike rental demand across the city, enabling:
 
-- Dynamic pricing adjustments to maximize revenue during peak times
-- Demand stimulation during off-peak periods
-- Consolidate real-time data streams to collect and process bike rental data efficiently in real-time.
+- Accurate hourly demand predictions
+- Real-time pricing adjustments
+- Pipeline automation for continuous model updates using Apache Airflow
 
-## Key Deliverables
+## Future Enhancements
 
-- Develop and deploy a machine learning model to forecast hourly bike rental demand across the city. [✅]
-- Implement a real-time dynamic pricing algorithm that adjusts prices based on forecasted demand.
-- Use experiment tracking to log model performance.
-- Collect and process real-time data streams to ensure the model has access to the latest rental data.
-- Create a user-friendly dashboard to visualize demand forecasts and pricing adjustments.
-- Ensure the system can handle high-frequency data updates and provide timely predictions.
-- Model performance monitoring to track prediction accuracy and system performance over time.
-- Evaluate and optimize pricing impact using A/B testing to assess the effectiveness of dynamic pricing strategies.
-- Build pipelines for data ingestion, model training, and deployment to ensure seamless integration and continuous improvement of the forecasting system.
-
-## Data Generator
-
-This project includes a data generator script (`data_gen.py`) that creates realistic bike rental data for any year, extending beyond the original 2011-2012 dataset. The generator supports comprehensive US federal holiday recognition and maintains compatibility with the original dataset schema.
-
-For detailed year compatibility information, see [YEAR_COMPATIBILITY.md](docs/YEAR_COMPATIBILITY.md).
-
-For usage examples, see [README_data_gen.md](docs/README_data_gen.md).
-
-## Documentation
-
-### Database & Migrations
-
-- **[Alembic Migration Guide](docs/ALEMBIC_GUIDE.md)** - Complete guide for database migrations with Alembic
-- **[Environment Variables Reference](docs/ENV_VARS.md)** - All environment variables explained
-- **[Dynamic Database Configuration](docs/DYNAMIC_DB_CONFIG.md)** - How to customize database names
-
-### Project Docs
-
-- **[Year Compatibility](docs/YEAR_COMPATIBILITY.md)** - Data generator year support
-- **[Data Generation](docs/README_data_gen.md)** - Using the data generator
+- Automate model retraining based on performance metrics.
+- Enhance dashboard with interactive visualizations.
+- Integrate Apache Kafka for real-time data streaming.
+- Implement advanced A/B testing for pricing strategies.
