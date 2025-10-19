@@ -3,9 +3,10 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from src.api.utilities.model_loader.loader import Data
 from src.config import app_config
-from src.schemas import PredictedPriceResponse
-from src.schemas.types import WeatherDict
+from src.ml.feature_engineering import FeatureEngineer
+from src.schemas.types import CurrencyType, PredictionResultDict, WeatherDict
 
 
 def convert_to_original_temp(
@@ -259,7 +260,6 @@ def calculate_price_multiplier(
     if inventory < 0:
         raise ValueError("Demand cannot exceed capacity")
     utilization_rate = (capacity - inventory) / capacity
-    print(f"Utilization Rate: {utilization_rate}")
 
     surge: float = 1 + (k * utilization_rate)
     comp_factor: float = calculate_competitor_factor(base_price, competitor_price)
@@ -275,10 +275,10 @@ def calculate_price_multiplier(
 
 
 def calculate_price(
-    base_price: float, price_multiplier: float
-) -> PredictedPriceResponse:
+    base_price: float, price_multiplier: float, currency: str
+) -> dict[str, Any]:
     """
-    Calculate final price based on a base price and a multiplier.
+    Calculate the price based on a base price and a multiplier.
 
     Parameters
     ----------
@@ -289,14 +289,13 @@ def calculate_price(
 
     Returns
     -------
-    PredictedPriceResponse
+    dict[str, Any]
 
     """
     min_price, max_price = (
         app_config.business_config.min_price,
         app_config.business_config.max_price,
     )
-    currency: str = app_config.business_config.currency
 
     if base_price < 0:
         raise ValueError("Base price cannot be negative")
@@ -309,20 +308,122 @@ def calculate_price(
     ).item()
     other_factor: float = round(final_price - base_price, 2)
 
-    result: dict[str, Any] = {
-        "currency": currency,
+    return {
         "base_price": base_price,
-        "price_components": {
-            "price_multiplier": price_multiplier,
-            "surge": other_factor if other_factor > 0 else 0.0,
-            "discount": other_factor if other_factor < 0 else 0.0,
-            "base_price": base_price,
-            "min_price": min_price,
-            "max_price": max_price,
-        },
-        "final_calculations": {"price": final_price},
+        "price": final_price,
+        "price_multiplier": price_multiplier,
+        "surge": other_factor if other_factor > 0 else 0.0,
+        "discount": other_factor if other_factor < 0 else 0.0,
+        "min_price": min_price,
+        "max_price": max_price,
+        "currency": currency,
     }
-    return PredictedPriceResponse(**result)  # type: ignore
+    # return PredictionResultDict(
+    #     base_price=base_price,
+    #     price=final_price,
+    #     price_multiplier=price_multiplier,
+    #     surge=other_factor if other_factor > 0 else 0.0,
+    #     discount=other_factor if other_factor < 0 else 0.0,
+    #     min_price=min_price,
+    #     max_price=max_price,
+    #     currency=currency,
+    # )
+
+
+def format_weather_features(weather: dict[str, Any]) -> dict[str, Any]:
+    """Format and transform weather features."""
+    columns = ["temp", "hum", "windspeed", "weathersit"]
+    df: pl.DataFrame = pl.DataFrame([weather]).select(columns)
+    df = df.with_columns(
+        pl.col("temp")
+        .map_batches(lambda x: convert_to_original_temp(x), return_dtype=pl.Float64)
+        .alias("temp"),
+        pl.col("windspeed")
+        .map_elements(
+            lambda x: convert_to_original_windspeed(x), return_dtype=pl.Float64
+        )
+        .alias("windspeed"),
+    ).with_columns(
+        pl.col("temp")
+        .map_elements(lambda x: calculate_temp_factor(x), return_dtype=pl.Int8)
+        .alias("temp"),
+        pl.col("hum")
+        .map_elements(lambda x: calculate_hum_factor(x), return_dtype=pl.Int8)
+        .alias("hum"),
+        pl.col("windspeed")
+        .map_elements(lambda x: calculate_windspeed_factor(x), return_dtype=pl.Int8)
+        .alias("windspeed"),
+    )
+    return df.to_dicts()[0]
+
+
+def predict_user_demand(model: Any, features: Data) -> int:
+    """Make a demand prediction using the provided model and features."""
+    default_value: float = 0.0
+    target_col: str = "target"
+
+    # Convert features to DataFrame and apply feature engineering
+    feature_df: pl.DataFrame = pl.from_records(features).with_columns(
+        # Add missing columns with default values
+        pl.lit(default_value).alias("atemp"),
+        pl.lit(default_value).alias("casual"),
+        pl.lit(default_value).alias("registered"),
+    )
+    feat_eng = FeatureEngineer()
+    feature_df = feat_eng.transform(
+        data=feature_df, config=app_config.feature_config
+    ).drop(target_col)
+
+    # Make prediction
+    prediction = model.predict(feature_df)
+
+    # Ensure the prediction is a non-negative integer
+    return np.clip(int(prediction[0]), a_min=0, a_max=None).item()
+
+
+def calculate_final_price(
+    data: Data,
+    base_price: float,
+    base_elasticity: float,
+    demand: float,
+    competitor_price: float,
+    currency: str,
+) -> PredictionResultDict:
+    """Make a price prediction using the provided model and features."""
+
+    if currency == CurrencyType.NGN:
+        pass  # No conversion needed for NGN
+
+    # Convert features to DataFrame
+    raw_df: pl.DataFrame = pl.from_records(data)
+    # Prepare weather features
+    weather_features: dict[str, Any] = format_weather_features(raw_df.to_dicts()[0])
+    weather_factor: float = calculate_weather_factor(**weather_features)
+    time: int = int(raw_df["hr"][0])
+    price_multiplier: float = calculate_price_multiplier(
+        base_price=base_price,
+        competitor_price=competitor_price,
+        demand=demand,
+        weather_factor=weather_factor,
+        time=time,
+        base_elasticity=base_elasticity,
+    )
+    _pred: dict[str, Any] = calculate_price(
+        base_price=base_price, price_multiplier=price_multiplier, currency=currency
+    )
+    pred: PredictionResultDict = PredictionResultDict(**_pred)  # type: ignore
+    pred["demand"] = demand
+    pred["competitor_price"] = competitor_price
+    return pred
+
+
+def get_competitor_price(data: Data) -> float:
+    """Get competitor price based on data."""
+    min_price: float = app_config.business_config.min_competitor_price
+    max_price: float = app_config.business_config.max_competitor_price
+
+    comp_predictor = CompetitorPricePredictor(min_price=min_price, max_price=max_price)
+    return comp_predictor.predict_price(data[0])
 
 
 class CompetitorPricePredictor:

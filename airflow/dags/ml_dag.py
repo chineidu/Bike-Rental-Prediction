@@ -603,7 +603,6 @@ def ml_pipeline_dag() -> None:
                 )
                 print(f"✅ Model registered with MLflow (version: {actual_version})")
 
-                # DEBUG: List registered models after registration
                 print("\n📋 Checking registered models after registration:")
                 registered_models = client.search_registered_models()
                 for rm in registered_models:

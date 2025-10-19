@@ -3,6 +3,8 @@ from typing import Annotated, Any
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field  # type: ignore
 from pydantic.alias_generators import to_camel
 
+from src.schemas.types import CurrencyType
+
 
 def round_probability(value: float) -> float:
     """Round a float value to two decimal places.
@@ -69,6 +71,7 @@ class _RawInputSchema(BaseSchema):
 
 class RawInputSchema(BaseSchema):
     data: list[_RawInputSchema]
+    currency: CurrencyType = Field(default=CurrencyType.NGN)
 
     class Config:
         from_attributes = True
@@ -91,7 +94,8 @@ class RawInputSchema(BaseSchema):
                             "windspeed": 0.0,
                             "cnt": 454,
                         }
-                    ]
+                    ],
+                    "currency": "NGN",
                 }
             ]
         }

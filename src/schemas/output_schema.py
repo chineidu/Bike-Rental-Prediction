@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from src.schemas.types import ModelType
+from src.schemas.types import CurrencyType, ModelType
 
 from .input_schema import BaseSchema, Float
 
@@ -129,16 +129,15 @@ class PriceComponents(BaseSchema):
     competitor_price: float | None = Field(default=None, description="Competitor price")
     min_price: float = Field(..., description="Minimum price")
     max_price: float = Field(..., description="Maximum price")
+    currency: CurrencyType = Field(default=CurrencyType.NGN)
 
 
 class PredictedPriceResponse(BaseSchema):
     """Predicted price response model."""
 
     status: Literal["success", "failed"] | None = Field(default=None)
-    currency: Literal["NGN", "USD"] = Field(default="NGN")
     capacity_components: CapacityComponents = Field(default_factory=dict)
     price_components: PriceComponents = Field(default_factory=dict)
-    final_calculations: dict[str, Any] = Field(default_factory=dict)
     timestamp: str = Field(
         default_factory=lambda: datetime.now().isoformat(timespec="seconds")
     )

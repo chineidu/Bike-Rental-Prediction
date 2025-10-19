@@ -1,108 +1,60 @@
 from typing import Any
 
-import numpy as np
-import polars as pl
-
-from src.config import app_config
+from src.api.utilities.model_loader.loader import Data, ModelInterface
 from src.ml.dynamic_pricing import (
-    CompetitorPricePredictor,
-    calculate_hum_factor,
-    calculate_price,
-    calculate_price_multiplier,
-    calculate_temp_factor,
-    calculate_weather_factor,
-    calculate_windspeed_factor,
-    convert_to_original_temp,
-    convert_to_original_windspeed,
+    calculate_final_price,
+    get_competitor_price,
+    predict_user_demand,
 )
-from src.ml.feature_engineering import FeatureEngineer
-from src.schemas import PredictedPriceResponse
+from src.schemas.types import PredictionResultDict
 
 
-def format_weather_features(weather: dict[str, Any]) -> dict[str, Any]:
-    """Format and transform weather features."""
-    columns = ["temp", "hum", "windspeed", "weathersit"]
-    df: pl.DataFrame = pl.DataFrame([weather]).select(columns)
-    df = df.with_columns(
-        pl.col("temp")
-        .map_batches(lambda x: convert_to_original_temp(x), return_dtype=pl.Float64)
-        .alias("temp"),
-        pl.col("windspeed")
-        .map_elements(
-            lambda x: convert_to_original_windspeed(x), return_dtype=pl.Float64
+class PredictionService:
+    def __init__(self, model: ModelInterface) -> None:
+        self._model = model
+
+    def predict(
+        self, data: Data, base_price: float, base_elasticity: float, currency: str
+    ) -> PredictionResultDict:
+        """Get prediction from the injected model."""
+        demand = self._predict_user_demand(data)
+        competitor_price = self._get_competitor_price(data)
+        return self._estimate_price(
+            data=data,
+            base_price=base_price,
+            base_elasticity=base_elasticity,
+            demand=demand,
+            competitor_price=competitor_price,
+            currency=currency,
         )
-        .alias("windspeed"),
-    ).with_columns(
-        pl.col("temp")
-        .map_elements(lambda x: calculate_temp_factor(x), return_dtype=pl.Int8)
-        .alias("temp"),
-        pl.col("hum")
-        .map_elements(lambda x: calculate_hum_factor(x), return_dtype=pl.Int8)
-        .alias("hum"),
-        pl.col("windspeed")
-        .map_elements(lambda x: calculate_windspeed_factor(x), return_dtype=pl.Int8)
-        .alias("windspeed"),
-    )
-    return df.to_dicts()[0]
 
+    def batch_predict(self, data_list: list[Data]) -> list[Any]:
+        """Get batch predictions from the injected model."""
+        return [self._model.predict(data) for data in data_list]
 
-def predict_user_demand(model: Any, features: list[dict[str, Any]]) -> int:
-    """Make a demand prediction using the provided model and features."""
-    default_value: float = 0.0
-    target_col: str = "target"
+    def _predict_user_demand(self, data: Data) -> int:
+        """Make a demand prediction using the provided model and features."""
+        return predict_user_demand(self._model, data)
 
-    # Convert features to DataFrame and apply feature engineering
-    feature_df: pl.DataFrame = pl.from_records(features).with_columns(
-        # Add missing columns with default values
-        pl.lit(default_value).alias("atemp"),
-        pl.lit(default_value).alias("casual"),
-        pl.lit(default_value).alias("registered"),
-    )
-    feat_eng = FeatureEngineer()
-    feature_df = feat_eng.transform(
-        data=feature_df, config=app_config.feature_config
-    ).drop(target_col)
+    def _estimate_price(
+        self,
+        data: Data,
+        base_price: float,
+        base_elasticity: float,
+        demand: float,
+        competitor_price: float,
+        currency: str,
+    ) -> PredictionResultDict:
+        """Make a price prediction using the provided model and data."""
+        return calculate_final_price(
+            data=data,
+            base_price=base_price,
+            base_elasticity=base_elasticity,
+            demand=demand,
+            competitor_price=competitor_price,
+            currency=currency,
+        )
 
-    # Make prediction
-    prediction = model.predict(feature_df)
-
-    # Ensure the prediction is a non-negative integer
-    return np.clip(int(prediction[0]), a_min=0, a_max=None).item()
-
-
-def estimate_price(
-    features: list[dict[str, Any]],
-    base_price: float,
-    base_elasticity: float,
-    demand: float,
-    competitor_price: float,
-) -> PredictedPriceResponse:
-    """Make a price prediction using the provided model and features."""
-
-    # Convert features to DataFrame
-    raw_df: pl.DataFrame = pl.from_records(features)
-    # Prepare weather features
-    weather_features: dict[str, Any] = format_weather_features(raw_df.to_dicts()[0])
-    weather_factor: float = calculate_weather_factor(**weather_features)
-    time: int = int(raw_df["hr"][0])
-    price_multiplier: float = calculate_price_multiplier(
-        base_price=base_price,
-        competitor_price=competitor_price,
-        demand=demand,
-        weather_factor=weather_factor,
-        time=time,
-        base_elasticity=base_elasticity,
-    )
-    pred: PredictedPriceResponse = calculate_price(
-        base_price=base_price, price_multiplier=price_multiplier
-    )
-    return pred
-
-
-def get_competitor_price(features: dict[str, Any]) -> float:
-    """Get competitor price based on features."""
-    min_price: float = app_config.business_config.min_competitor_price
-    max_price: float = app_config.business_config.max_competitor_price
-
-    comp_predictor = CompetitorPricePredictor(min_price=min_price, max_price=max_price)
-    return comp_predictor.predict_price(features)
+    def _get_competitor_price(self, data: Data) -> float:
+        """Get competitor price based on data."""
+        return get_competitor_price(data)

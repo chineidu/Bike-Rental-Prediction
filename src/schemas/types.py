@@ -1,11 +1,14 @@
 from enum import Enum
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import numpy as np
 
 type Number = int | float | np.integer | np.floating
 
 
+# =======================================
+# ============= ENUMS ===================
+# =======================================
 class ArtifactsType(str, Enum):
     """Enum for different types of artifacts."""
 
@@ -26,6 +29,27 @@ class ModelType(str, Enum):
     LIGHTGBM = "LightGBMRegressor"
 
 
+class CurrencyType(str, Enum):
+    """Enum for different currency types."""
+
+    NGN = "NGN"
+    USD = "USD"
+
+
+class UserRole(str, Enum):
+    """Enum for different user roles."""
+
+    ADMIN = "admin"
+    USER = "user"
+    MODERATOR = "moderator"
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+# =======================================
+# ============== DATA ===================
+# =======================================
 class DataDict(TypedDict):
     """Dictionary type for training, validation, and test data splits."""
 
@@ -53,12 +77,19 @@ class WeatherDict(TypedDict):
     weathersit: float
 
 
-class UserRole(str, Enum):
-    """Enum for different user roles."""
+class ModelManagerDict(TypedDict):
+    model_loader: Any
+    prediction_service: Any
 
-    ADMIN = "admin"
-    USER = "user"
-    MODERATOR = "moderator"
 
-    def __str__(self) -> str:
-        return str(self.value)
+class PredictionResultDict(TypedDict):
+    base_price: float
+    price: float
+    competitor_price: float
+    price_multiplier: float
+    surge: float
+    discount: float
+    min_price: float
+    max_price: float
+    demand: float
+    currency: str
