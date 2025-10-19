@@ -68,26 +68,7 @@ class DataValidatorSchema(BaseSchema):
 
 
 class TrainingResult(BaseSchema):
-    """
-    Result of model training.
-
-    Attributes
-    ----------
-    run_id : str | None
-        MLflow run ID for the training experiment.
-    model_name : ModelType | None
-        Type of model trained (xgboost, lightgbm, random_forest).
-    trained_model : Any
-        Trained model object. Can be:
-        - sklearn models (RandomForestRegressor, etc.)
-        - XGBoost models (xgb.XGBRegressor, xgb.Booster)
-        - LightGBM models (lgb.LGBMRegressor, lgb.Booster)
-        - Any other trained ML model
-    metrics : dict[str, Any]
-        Evaluation metrics (RMSE, MAE, MAPE, R2, etc.).
-    predictions : list[float] | None
-        List of predictions on the test set.
-    """
+    """Result of model training."""
 
     run_id: str | None = Field(default=None)
     model_name: ModelType | None = Field(default=None)
@@ -97,24 +78,7 @@ class TrainingResult(BaseSchema):
 
 
 class HyperparameterTuningResult(BaseSchema):
-    """
-    Result of hyperparameter tuning with Optuna.
-
-    Attributes
-    ----------
-    run_id : str
-        MLflow run ID for the hyperparameter tuning experiment.
-    model_name : ModelType
-        Type of model that was tuned (xgboost, lightgbm, random_forest).
-    best_params : dict[str, Any]
-        Best hyperparameters found during optimization.
-    metrics : dict[str, float | None]
-        Evaluation metrics (RMSE, mean_rmse, MAE, MAPE, ADJUSTED_R2).
-    model_uri : str
-        MLflow URI to the best model artifact.
-    predictions : list[float] | None
-        List of predictions on the test set.
-    """
+    """Result of hyperparameter tuning with Optuna."""
 
     run_id: str
     model_name: ModelType
@@ -124,11 +88,13 @@ class HyperparameterTuningResult(BaseSchema):
     predictions: list[float] | None = Field(default=None)
 
 
-# ============ API SCHEMAS ============ #
+# =======================================
+# ============= API SCHEMAS =============
+# =======================================
+
+
 class HealthCheck(BaseSchema):
-    """
-    Health check response model.
-    """
+    """Health check response model."""
 
     status: str = ""
     api_name: str = ""
@@ -166,9 +132,7 @@ class PriceComponents(BaseSchema):
 
 
 class PredictedPriceResponse(BaseSchema):
-    """
-    Predicted price response model.
-    """
+    """Predicted price response model."""
 
     status: Literal["success", "failed"] | None = Field(default=None)
     currency: Literal["NGN", "USD"] = Field(default="NGN")
