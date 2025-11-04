@@ -27,6 +27,7 @@ This guide explains how to use Alembic for database migrations without breaking 
       - [Step 1. Modify your models in src/db/models.py](#step-1-modify-your-models-in-srcdbmodelspy)
       - [Step 2. Generate migration](#step-2-generate-migration)
       - [Step 3. Review the generated migration in alembic/versions/](#step-3-review-the-generated-migration-in-alembicversions)
+      - [Step 4. Apply migration](#step-4-apply-migration)
     - [Checking Migration Status](#checking-migration-status)
     - [Rolling Back a Migration](#rolling-back-a-migration)
   - [Common Commands](#common-commands)
@@ -110,33 +111,36 @@ This created:
 
 #### Step 3: Configured `alembic/env.py`
 
-Modified to:
-
-- Import models from `src.db.models`
-- Read database URL from environment variables
-- Point to API database (not MLflow database)
-
-Key changes made to `alembic/env.py`:
+Modified to use the centralized `app_settings` configuration instead of environment variables:
 
 ```python
+from src.config import app_settings
 from src.db.models import Base
-from src.config.settings import refresh_settings
 
-# Get settings
-settings = refresh_settings()
+# this is the Alembic Config object, which provides
+# access to the values within the .ini file in use.
+config = context.config
 
-# Set target metadata
+# =============================================================
+# ==================== Add DB Config ==========================
+# =============================================================
+config.set_main_option(
+    "sqlalchemy.url",
+    f"postgresql+psycopg2://{app_settings.POSTGRES_USER}:{app_settings.POSTGRES_PASSWORD.get_secret_value()}"
+    f"@{app_settings.POSTGRES_HOST}:{app_settings.POSTGRES_PORT}/{app_settings.API_DB_NAME}",
+)
+
+# add your model's MetaData object here
+# for 'autogenerate' support
 target_metadata = Base.metadata
-
-# Database URL from environment
-def get_url():
-    return (
-        f"postgresql://{settings.API_DB_USER}:{settings.API_DB_PASSWORD}"
-        f"@{settings.API_DB_HOST}:{settings.API_DB_PORT}/{settings.API_DB_NAME}"
-    )
-
-config.set_main_option("sqlalchemy.url", get_url())
 ```
+
+**Key improvements:**
+
+- **Simplified configuration**: Uses centralized `app_settings` instead of duplicating environment variable logic
+- **Consistent with project**: Leverages the same configuration system used throughout the application
+- **Cleaner code**: Removed the `get_url()` function and environment variable parsing
+- **Better maintainability**: Database configuration changes only need to be made in one place (`app_settings`)
 
 #### Step 4: Updated `alembic.ini`
 
@@ -494,6 +498,7 @@ def init_db() -> None:
 8. **Separate schema from data**: Use Alembic for structure, setup.py for initial data
 9. **Run seed script after migrations**: Always run `make db-seed` after `make db-upgrade`
 10. **Make seed scripts idempotent**: Check if data exists before inserting
+11. **Use centralized configuration**: Leverage `app_settings` for consistent database configuration across the application
 
 ## Safety Features
 
